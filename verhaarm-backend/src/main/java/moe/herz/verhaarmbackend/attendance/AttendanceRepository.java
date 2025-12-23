@@ -6,6 +6,8 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 
 import jakarta.persistence.LockModeType;
+import org.springframework.data.repository.query.Param;
+
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -55,4 +57,15 @@ public interface AttendanceRepository extends JpaRepository<AttendanceEntity, UU
 		  )
 	""")
 	List<AttendanceEntity> findVisibleByEventWithoutFineForUpdate(UUID eventId);
+
+	@Lock(LockModeType.PESSIMISTIC_WRITE)
+	@Query("""
+  select a from AttendanceEntity a
+  where a.eventId = :eventId
+    and a.deletedAt is null
+""")
+	List<AttendanceEntity> findVisibleByEventForUpdate(@Param("eventId") UUID eventId);
+
+
+
 }

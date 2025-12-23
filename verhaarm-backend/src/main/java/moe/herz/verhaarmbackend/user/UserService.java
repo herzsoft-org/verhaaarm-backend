@@ -140,7 +140,14 @@ public class UserService {
 		}
 
 		String username = req.username();
+		if (username == null) throw ApiErrors.badRequest("Username required");
+
 		String normalized = UsernameNormalizer.normalize(username);
+
+		// username must already be in allowed form
+		if (!username.equals(normalized) || normalized.isBlank()) {
+			throw ApiErrors.badRequest("Username must match [a-z0-9-] (and use ae/oe/ue/ss instead of umlauts)");
+		}
 
 		if (users.existsByUsername(username) || users.existsByUsernameNormalized(normalized)) {
 			throw ApiErrors.badRequest("Username already exists");
@@ -187,8 +194,17 @@ public class UserService {
 		UUID actorId = actor != null ? actor.getId() : null;
 		boolean actorIsAdmin = actorId != null && users.hasRole(actorId, UserRole.ADMIN);
 
-		Set<UserRole> newRoles = parseRoles(req.roles());
-		if (newRoles.isEmpty()) newRoles = Set.of(UserRole.MEMBER);
+		// PATCH semantics for roles:
+		// - roles == null  => keep current roles
+		// - roles == []    => set to MEMBER (default)
+		// - roles provided => parse + apply (if parse result empty => MEMBER)
+		Set<UserRole> newRoles;
+		if (req.roles() == null) {
+			newRoles = u.roleSet();
+		} else {
+			Set<UserRole> parsed = parseRoles(req.roles());
+			newRoles = parsed.isEmpty() ? Set.of(UserRole.MEMBER) : parsed;
+		}
 
 		// SENIOR cannot assign ADMIN
 		if (!actorIsAdmin && newRoles.contains(UserRole.ADMIN)) {
@@ -250,7 +266,9 @@ public class UserService {
 		}
 
 		// optional: display name changes
-		if (req.displayName() != null && !req.displayName().isBlank() && !Objects.equals(beforeDisplayName, u.getDisplayName())) {
+		if (req.displayName() != null
+				&& !req.displayName().isBlank()
+				&& !Objects.equals(beforeDisplayName, u.getDisplayName())) {
 			var d = audit.obj();
 			audit.put(d, "targetUserId", u.getId());
 			audit.put(d, "targetUsername", u.getUsername());

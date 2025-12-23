@@ -210,53 +210,66 @@ public class AttendanceService {
 
 		boolean dryRun = req != null && req.dryRun();
 
-		// CRITICAL: lock rows so two concurrent calls cannot both create fines
-		List<AttendanceEntity> rows = attendance.findVisibleByEventWithoutFineForUpdate(eventId);
+		// Lock all visible rows for this event so concurrent runs converge safely
+		List<AttendanceEntity> rows = attendance.findVisibleByEventForUpdate(eventId);
 
 		List<UUID> fineIds = new ArrayList<>();
 
 		for (AttendanceEntity a : rows) {
-			// extra guard
-			if (a.getFineId() != null) continue;
-
 			FineTemplate tmpl = resolveTemplate(cfg, a.getStatus());
-			if (tmpl == null) {
-				throw ApiErrors.badRequest("Missing fine config for " + a.getStatus());
-			}
+			if (tmpl == null) throw ApiErrors.badRequest("Missing fine config for " + a.getStatus());
 
 			if (dryRun) {
-				fineIds.add(UUID.randomUUID());
+				fineIds.add(a.getFineId() != null ? a.getFineId() : UUID.randomUUID());
 				continue;
 			}
 
-			UUID fineId = UUID.randomUUID();
+			if (a.getFineId() == null) {
+				// create + link
+				UUID fineId = UUID.randomUUID();
+				FineEntity f = new FineEntity(
+						fineId,
+						event.getPeriodId(),
+						actor.getId(),
+						tmpl.catalogItemId,
+						tmpl.reason,
+						tmpl.amountCents,
+						tmpl.type
+				);
+				f.addTarget(a.getUserId());
+				fines.save(f);
 
-			FineEntity f = new FineEntity(
-					fineId,
-					event.getPeriodId(),
-					actor.getId(),
-					tmpl.catalogItemId,
-					tmpl.reason,
-					tmpl.amountCents,
-					tmpl.type
-			);
+				a.setFineId(fineId);
+				attendance.save(a);
 
-			// attendance fines target exactly one user
-			f.addTarget(a.getUserId());
+				fineIds.add(fineId);
+			} else {
+				// update existing linked fine to match current expected template
+				FineEntity f = fines.findVisibleById(a.getFineId())
+						.orElseThrow(() -> ApiErrors.notFound("Linked fine not found"));
 
-			fines.save(f);
+				// Period should match event period; if not, fix it
+				f.setPeriodId(event.getPeriodId());
 
-			// link attendance -> fine (idempotency)
-			a.setFineId(fineId);
-			attendance.save(a);
+				f.setCatalogItemId(tmpl.catalogItemId);
+				f.setReason(tmpl.reason);
+				f.setAmountCents(tmpl.amountCents);
+				f.setType(tmpl.type);
 
-			fineIds.add(fineId);
+				// enforce single target = that user
+				f.clearTargets();
+				f.addTarget(a.getUserId());
+
+				fines.save(f);
+
+				fineIds.add(f.getId());
+			}
 		}
 
 		em.flush();
-
 		return new GenerateAttendanceFinesResultDto(fineIds.size(), fineIds);
 	}
+
 
 	private FineTemplate resolveTemplate(AttendanceFineConfigEntity cfg, AttendanceStatus status) {
 		if (status == AttendanceStatus.LATE) {
