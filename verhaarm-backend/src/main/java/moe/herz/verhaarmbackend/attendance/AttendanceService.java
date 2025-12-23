@@ -3,7 +3,6 @@ package moe.herz.verhaarmbackend.attendance;
 import moe.herz.verhaarmbackend.attendance.dto.*;
 import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.event.EventEntity;
-import moe.herz.verhaarmbackend.event.EventOwnerType;
 import moe.herz.verhaarmbackend.event.EventRepository;
 import moe.herz.verhaarmbackend.fine.FineEntity;
 import moe.herz.verhaarmbackend.fine.FineRepository;
@@ -125,7 +124,6 @@ public class AttendanceService {
 
 	@Transactional(readOnly = true)
 	public List<AttendanceDto> listForEvent(UUID eventId, UserEntity actor) {
-		// Anyone can view events; but editing attendance is restricted.
 		events.findVisibleById(eventId).orElseThrow(() -> ApiErrors.notFound("Event not found"));
 		return attendance.findVisibleByEventId(eventId).stream().map(this::toDto).toList();
 	}
@@ -136,8 +134,6 @@ public class AttendanceService {
 
 		EventEntity event = events.findVisibleById(eventId).orElseThrow(() -> ApiErrors.notFound("Event not found"));
 
-		// SENIOR/HOUSEKEEPING can add late/absent fines to any event regardless of creator:
-		// => attendance modification is allowed for SENIOR/HOUSEKEEPING/ADMIN for all events.
 		UUID userId = req.userId();
 
 		AttendanceStatus status = req.status();
@@ -181,7 +177,7 @@ public class AttendanceService {
 	}
 
 	// --------------------
-	// Generate fines from attendance
+	// Generate fines from attendance (IDEMPOTENT + CONCURRENCY-SAFE)
 	// --------------------
 
 	@Transactional
@@ -193,27 +189,32 @@ public class AttendanceService {
 		AttendanceFineConfigEntity cfg = configs.findById(event.getPeriodId())
 				.orElseThrow(() -> ApiErrors.badRequest("Attendance fine config not set for period"));
 
-		List<AttendanceEntity> rows = attendance.findVisibleByEventWithoutFine(eventId);
-
 		boolean dryRun = req != null && req.dryRun();
+
+		// CRITICAL: lock rows so two concurrent calls cannot both create fines
+		List<AttendanceEntity> rows = attendance.findVisibleByEventWithoutFineForUpdate(eventId);
 
 		List<UUID> fineIds = new ArrayList<>();
 
 		for (AttendanceEntity a : rows) {
-			FineTemplate tmpl = resolveTemplate(cfg, a.getStatus());
+			// extra guard (should be redundant with query + lock, but keeps behavior robust)
+			if (a.getFineId() != null) continue;
 
+			FineTemplate tmpl = resolveTemplate(cfg, a.getStatus());
 			if (tmpl == null) {
 				throw ApiErrors.badRequest("Missing fine config for " + a.getStatus());
 			}
 
 			if (dryRun) {
-				// simulate uuid without writing
+				// No writes; just report what would be created (ids are placeholders)
 				fineIds.add(UUID.randomUUID());
 				continue;
 			}
 
+			UUID fineId = UUID.randomUUID();
+
 			FineEntity f = new FineEntity(
-					UUID.randomUUID(),
+					fineId,
 					event.getPeriodId(),
 					actor.getId(),
 					tmpl.catalogItemId,
@@ -225,16 +226,17 @@ public class AttendanceService {
 			// attendance fines target exactly one user
 			f.addTarget(a.getUserId());
 
-			// store suggester_user_id = null; acceptedFromSuggestionId is not involved
-
 			fines.save(f);
-			em.flush(); // so fine ID exists for FK use below
 
-			a.setFineId(f.getId());
+			// link attendance -> fine (this is what makes generation idempotent)
+			a.setFineId(fineId);
 			attendance.save(a);
 
-			fineIds.add(f.getId());
+			fineIds.add(fineId);
 		}
+
+		// One flush at end
+		em.flush();
 
 		return new GenerateAttendanceFinesResultDto(fineIds.size(), fineIds);
 	}
