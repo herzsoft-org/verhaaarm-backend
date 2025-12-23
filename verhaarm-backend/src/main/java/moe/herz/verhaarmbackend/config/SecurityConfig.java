@@ -19,6 +19,8 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 
 @Configuration
 @EnableMethodSecurity
@@ -36,11 +38,25 @@ public class SecurityConfig {
 						.requestMatchers("/error").permitAll()
 						.anyRequest().authenticated()
 				)
-
+				.exceptionHandling(eh -> eh
+						// no/invalid auth => 401
+						.authenticationEntryPoint((request, response, ex) -> {
+							response.setStatus(HttpStatus.UNAUTHORIZED.value());
+							response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+							response.getWriter().write("{\"error\":\"Unauthorized\"}");
+						})
+						// authenticated but not allowed => 403
+						.accessDeniedHandler((request, response, ex) -> {
+							response.setStatus(HttpStatus.FORBIDDEN.value());
+							response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+							response.getWriter().write("{\"error\":\"Forbidden\"}");
+						})
+				)
 				.addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
 		return http.build();
 	}
+
 
 	/**
 	 * Backing store for username/password auth used by /auth/login.
