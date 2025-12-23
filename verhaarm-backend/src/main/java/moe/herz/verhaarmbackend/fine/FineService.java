@@ -239,7 +239,9 @@ public class FineService {
 				f.getAmountCents(),
 				f.getType(),
 				Set.copyOf(f.getTargetUserIds()),
-				f.getCreatedAt()
+				f.getCreatedAt(),
+				f.getSuggesterUserId(),
+				f.getAcceptedFromSuggestionId()
 		);
 	}
 }

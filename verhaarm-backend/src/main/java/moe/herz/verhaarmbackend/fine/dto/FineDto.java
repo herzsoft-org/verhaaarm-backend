@@ -15,5 +15,9 @@ public record FineDto(
 		int amountCents,
 		FineType type,
 		Set<UUID> targetUserIds,
-		OffsetDateTime createdAt
+		OffsetDateTime createdAt,
+
+		// suggestion metadata (nullable)
+		UUID suggesterUserId,
+		UUID acceptedFromSuggestionId
 ) {}

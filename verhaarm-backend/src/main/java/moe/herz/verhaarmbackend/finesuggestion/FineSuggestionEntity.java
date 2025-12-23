@@ -1,6 +1,7 @@
-package moe.herz.verhaarmbackend.fine;
+package moe.herz.verhaarmbackend.finesuggestion;
 
 import jakarta.persistence.*;
+import moe.herz.verhaarmbackend.fine.FineType;
 
 import java.time.OffsetDateTime;
 import java.util.HashSet;
@@ -8,8 +9,8 @@ import java.util.Set;
 import java.util.UUID;
 
 @Entity
-@Table(name = "fines")
-public class FineEntity {
+@Table(name = "fine_suggestions")
+public class FineSuggestionEntity {
 
 	@Id
 	@Column(nullable = false)
@@ -34,13 +35,18 @@ public class FineEntity {
 	@Column(nullable = false)
 	private FineType type;
 
-	// original suggestion creator (if accepted from suggestion)
-	@Column(name = "suggester_user_id")
-	private UUID suggesterUserId;
+	@Enumerated(EnumType.STRING)
+	@Column(nullable = false)
+	private FineSuggestionStatus status;
 
-	// link back to suggestion (optional but useful)
-	@Column(name = "accepted_from_suggestion_id")
-	private UUID acceptedFromSuggestionId;
+	@Column(name = "decided_by_user_id")
+	private UUID decidedByUserId;
+
+	@Column(name = "decided_at")
+	private OffsetDateTime decidedAt;
+
+	@Column(name = "accepted_fine_id")
+	private UUID acceptedFineId;
 
 	@Column(name = "deleted_at")
 	private OffsetDateTime deletedAt;
@@ -53,17 +59,25 @@ public class FineEntity {
 
 	@ElementCollection
 	@CollectionTable(
-			name = "fine_targets",
-			joinColumns = @JoinColumn(name = "fine_id")
+			name = "fine_suggestion_targets",
+			joinColumns = @JoinColumn(name = "suggestion_id")
 	)
 	@Column(name = "user_id", nullable = false)
 	private Set<UUID> targetUserIds = new HashSet<>();
 
-	protected FineEntity() {
+	protected FineSuggestionEntity() {
 		// JPA
 	}
 
-	public FineEntity(UUID id, UUID periodId, UUID creatorUserId, UUID catalogItemId, String reason, int amountCents, FineType type) {
+	public FineSuggestionEntity(
+			UUID id,
+			UUID periodId,
+			UUID creatorUserId,
+			UUID catalogItemId,
+			String reason,
+			int amountCents,
+			FineType type
+	) {
 		this.id = id;
 		this.periodId = periodId;
 		this.creatorUserId = creatorUserId;
@@ -71,6 +85,7 @@ public class FineEntity {
 		this.reason = reason;
 		this.amountCents = amountCents;
 		this.type = type;
+		this.status = FineSuggestionStatus.PENDING;
 	}
 
 	public UUID getId() { return id; }
@@ -80,24 +95,32 @@ public class FineEntity {
 	public String getReason() { return reason; }
 	public int getAmountCents() { return amountCents; }
 	public FineType getType() { return type; }
-	public UUID getSuggesterUserId() { return suggesterUserId; }
-	public UUID getAcceptedFromSuggestionId() { return acceptedFromSuggestionId; }
+	public FineSuggestionStatus getStatus() { return status; }
+	public UUID getDecidedByUserId() { return decidedByUserId; }
+	public OffsetDateTime getDecidedAt() { return decidedAt; }
+	public UUID getAcceptedFineId() { return acceptedFineId; }
 	public OffsetDateTime getDeletedAt() { return deletedAt; }
 	public OffsetDateTime getCreatedAt() { return createdAt; }
 	public OffsetDateTime getUpdatedAt() { return updatedAt; }
 	public Set<UUID> getTargetUserIds() { return targetUserIds; }
 
-	public void setPeriodId(UUID periodId) { this.periodId = periodId; }
-	public void setCatalogItemId(UUID catalogItemId) { this.catalogItemId = catalogItemId; }
-	public void setReason(String reason) { this.reason = reason; }
-	public void setAmountCents(int amountCents) { this.amountCents = amountCents; }
-	public void setType(FineType type) { this.type = type; }
-	public void setSuggesterUserId(UUID suggesterUserId) { this.suggesterUserId = suggesterUserId; }
-	public void setAcceptedFromSuggestionId(UUID acceptedFromSuggestionId) { this.acceptedFromSuggestionId = acceptedFromSuggestionId; }
-	public void setDeletedAt(OffsetDateTime deletedAt) { this.deletedAt = deletedAt; }
-
 	public boolean isDeleted() { return deletedAt != null; }
+
+	public void setDeletedAt(OffsetDateTime deletedAt) { this.deletedAt = deletedAt; }
 
 	public void clearTargets() { this.targetUserIds.clear(); }
 	public void addTarget(UUID userId) { this.targetUserIds.add(userId); }
+
+	public void markAccepted(UUID decidedByUserId, UUID fineId) {
+		this.status = FineSuggestionStatus.ACCEPTED;
+		this.decidedByUserId = decidedByUserId;
+		this.decidedAt = OffsetDateTime.now();
+		this.acceptedFineId = fineId;
+	}
+
+	public void markRejected(UUID decidedByUserId) {
+		this.status = FineSuggestionStatus.REJECTED;
+		this.decidedByUserId = decidedByUserId;
+		this.decidedAt = OffsetDateTime.now();
+	}
 }
