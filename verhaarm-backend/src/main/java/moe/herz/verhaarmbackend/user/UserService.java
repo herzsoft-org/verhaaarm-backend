@@ -1,5 +1,6 @@
 package moe.herz.verhaarmbackend.user;
 
+import moe.herz.verhaarmbackend.audit.AuditLogService;
 import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.user.dto.CreateUserRequest;
 import moe.herz.verhaarmbackend.user.dto.UpdateUserRequest;
@@ -18,10 +19,12 @@ public class UserService {
 
 	private final UserRepository users;
 	private final PasswordEncoder encoder;
+	private final AuditLogService audit;
 
-	public UserService(UserRepository users, PasswordEncoder encoder) {
+	public UserService(UserRepository users, PasswordEncoder encoder, AuditLogService audit) {
 		this.users = users;
 		this.encoder = encoder;
+		this.audit = audit;
 	}
 
 	// --------------------
@@ -30,7 +33,6 @@ public class UserService {
 
 	@Transactional(readOnly = true)
 	public List<UserDto> listAll() {
-		// roles needed → fetch-join, ordered
 		return users.findAllWithRolesOrdered()
 				.stream()
 				.map(this::toDto)
@@ -76,7 +78,6 @@ public class UserService {
 		Set<UserRole> newRoles = parseRoles(req.roles());
 		if (newRoles.isEmpty()) newRoles = Set.of(UserRole.MEMBER);
 
-		// New user is enabled by default
 		validateRoleConstraintsOnChange(null, false, newRoles, false);
 
 		UserEntity u = new UserEntity(
@@ -99,9 +100,12 @@ public class UserService {
 	// --------------------
 
 	@Transactional
-	public UserDto updateUser(UUID id, UpdateUserRequest req, boolean actorIsAdmin) {
+	public UserDto updateUser(UUID id, UpdateUserRequest req, UserEntity actor) {
 		UserEntity u = users.findByIdWithRoles(id)
 				.orElseThrow(() -> ApiErrors.notFound("User not found"));
+
+		UUID actorId = actor != null ? actor.getId() : null;
+		boolean actorIsAdmin = actorId != null && users.hasRole(actorId, UserRole.ADMIN);
 
 		Set<UserRole> newRoles = parseRoles(req.roles());
 		if (newRoles.isEmpty()) newRoles = Set.of(UserRole.MEMBER);
@@ -127,6 +131,11 @@ public class UserService {
 			}
 		}
 
+		// snapshots before changes
+		boolean beforeDisabled = u.isDisabled();
+		Set<UserRole> beforeRoles = u.roleSet();
+		String beforeDisplayName = u.getDisplayName();
+
 		validateRoleConstraintsOnChange(u, u.isDisabled(), newRoles, newDisabled);
 
 		if (req.displayName() != null && !req.displayName().isBlank()) {
@@ -139,6 +148,37 @@ public class UserService {
 		for (UserRole r : newRoles) u.addRole(r);
 
 		users.save(u);
+
+		// AUDIT: role change
+		if (!beforeRoles.equals(newRoles)) {
+			var d = audit.obj();
+			audit.put(d, "targetUserId", u.getId());
+			audit.put(d, "targetUsername", u.getUsername());
+			audit.putStringArray(d, "beforeRoles", beforeRoles.stream().map(Enum::name).sorted().toList());
+			audit.putStringArray(d, "afterRoles", newRoles.stream().map(Enum::name).sorted().toList());
+			audit.log(actor, "user.rolesChanged", d);
+		}
+
+		// AUDIT: disabled change
+		if (beforeDisabled != newDisabled) {
+			var d = audit.obj();
+			audit.put(d, "targetUserId", u.getId());
+			audit.put(d, "targetUsername", u.getUsername());
+			audit.put(d, "beforeDisabled", beforeDisabled);
+			audit.put(d, "afterDisabled", newDisabled);
+			audit.log(actor, "user.disabledChanged", d);
+		}
+
+		// optional: display name changes
+		if (req.displayName() != null && !req.displayName().isBlank() && !Objects.equals(beforeDisplayName, u.getDisplayName())) {
+			var d = audit.obj();
+			audit.put(d, "targetUserId", u.getId());
+			audit.put(d, "targetUsername", u.getUsername());
+			audit.put(d, "beforeDisplayName", beforeDisplayName);
+			audit.put(d, "afterDisplayName", u.getDisplayName());
+			audit.log(actor, "user.displayNameChanged", d);
+		}
+
 		return toDto(u);
 	}
 
@@ -165,7 +205,6 @@ public class UserService {
 			Set<UserRole> newRoles,
 			boolean newDisabled
 	) {
-		// enabled users only
 		List<UserEntity> enabled = users.findAllEnabledWithRoles();
 
 		long seniors = enabled.stream().filter(u -> hasRole(u, UserRole.SENIOR)).count();

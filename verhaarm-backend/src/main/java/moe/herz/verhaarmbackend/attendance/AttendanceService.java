@@ -1,3 +1,4 @@
+// src/main/java/moe/herz/verhaarmbackend/attendance/AttendanceService.java
 package moe.herz.verhaarmbackend.attendance;
 
 import moe.herz.verhaarmbackend.attendance.dto.*;
@@ -135,8 +136,11 @@ public class AttendanceService {
 		EventEntity event = events.findVisibleById(eventId).orElseThrow(() -> ApiErrors.notFound("Event not found"));
 
 		UUID userId = req.userId();
+		if (userId == null) throw ApiErrors.badRequest("userId required");
 
 		AttendanceStatus status = req.status();
+		if (status == null) throw ApiErrors.badRequest("status required");
+
 		Integer lateMinutes = req.lateMinutes();
 
 		if (status == AttendanceStatus.LATE) {
@@ -146,10 +150,23 @@ public class AttendanceService {
 			lateMinutes = null;
 		}
 
+		// Normal case: row exists and is visible
 		AttendanceEntity row = attendance.findVisibleByEventAndUser(eventId, userId).orElse(null);
+
 		if (row == null) {
-			row = new AttendanceEntity(UUID.randomUUID(), eventId, event.getPeriodId(), userId, status, lateMinutes);
-			attendance.save(row);
+			// Soft-delete aware: if row exists but is deleted, revive it instead of inserting
+			AttendanceEntity existing = attendance.findAnyByEventAndUser(eventId, userId).orElse(null);
+
+			if (existing != null) {
+				existing.setDeletedAt(null);
+				existing.setStatus(status);
+				existing.setLateMinutes(lateMinutes);
+				attendance.save(existing);
+				row = existing;
+			} else {
+				row = new AttendanceEntity(UUID.randomUUID(), eventId, event.getPeriodId(), userId, status, lateMinutes);
+				attendance.save(row);
+			}
 		} else {
 			row.setStatus(status);
 			row.setLateMinutes(lateMinutes);
@@ -159,7 +176,9 @@ public class AttendanceService {
 		em.flush();
 		em.clear();
 
-		AttendanceEntity reloaded = attendance.findById(row.getId()).orElseThrow(() -> ApiErrors.notFound("Attendance not found"));
+		AttendanceEntity reloaded = attendance.findById(row.getId())
+				.orElseThrow(() -> ApiErrors.notFound("Attendance not found"));
+
 		return toDto(reloaded);
 	}
 
@@ -197,7 +216,7 @@ public class AttendanceService {
 		List<UUID> fineIds = new ArrayList<>();
 
 		for (AttendanceEntity a : rows) {
-			// extra guard (should be redundant with query + lock, but keeps behavior robust)
+			// extra guard
 			if (a.getFineId() != null) continue;
 
 			FineTemplate tmpl = resolveTemplate(cfg, a.getStatus());
@@ -206,7 +225,6 @@ public class AttendanceService {
 			}
 
 			if (dryRun) {
-				// No writes; just report what would be created (ids are placeholders)
 				fineIds.add(UUID.randomUUID());
 				continue;
 			}
@@ -228,14 +246,13 @@ public class AttendanceService {
 
 			fines.save(f);
 
-			// link attendance -> fine (this is what makes generation idempotent)
+			// link attendance -> fine (idempotency)
 			a.setFineId(fineId);
 			attendance.save(a);
 
 			fineIds.add(fineId);
 		}
 
-		// One flush at end
 		em.flush();
 
 		return new GenerateAttendanceFinesResultDto(fineIds.size(), fineIds);

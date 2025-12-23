@@ -1,5 +1,6 @@
 package moe.herz.verhaarmbackend.event;
 
+import moe.herz.verhaarmbackend.audit.AuditLogService;
 import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.event.dto.CreateEventRequest;
 import moe.herz.verhaarmbackend.event.dto.EventDto;
@@ -21,13 +22,15 @@ public class EventService {
 
 	private final EventRepository events;
 	private final ConventPeriodRepository periods;
+	private final AuditLogService audit;
 
 	@PersistenceContext
 	private EntityManager em;
 
-	public EventService(EventRepository events, ConventPeriodRepository periods) {
+	public EventService(EventRepository events, ConventPeriodRepository periods, AuditLogService audit) {
 		this.events = events;
 		this.periods = periods;
+		this.audit = audit;
 	}
 
 	@Transactional(readOnly = true)
@@ -74,12 +77,23 @@ public class EventService {
 
 		events.save(e);
 
-		// Ensure DB-generated columns (created_at) are available
 		em.flush();
 		em.clear();
 
 		var reloaded = events.findVisibleById(e.getId())
 				.orElseThrow(() -> ApiErrors.notFound("Event not found"));
+
+		// AUDIT: event created
+		var d = audit.obj();
+		audit.put(d, "eventId", reloaded.getId());
+		audit.put(d, "periodId", reloaded.getPeriodId());
+		audit.put(d, "creatorUserId", reloaded.getCreatorUserId());
+		audit.put(d, "title", reloaded.getTitle());
+		audit.put(d, "startsAt", reloaded.getStartsAt() == null ? null : reloaded.getStartsAt().toString());
+		audit.put(d, "mandatory", reloaded.isMandatory());
+		audit.put(d, "ownerType", reloaded.getOwnerType() == null ? null : reloaded.getOwnerType().name());
+		audit.log(actor, "event.create", d);
+
 		return toDto(reloaded);
 	}
 
@@ -102,6 +116,12 @@ public class EventService {
 			}
 		}
 
+		// snapshot before
+		UUID beforePeriodId = e.getPeriodId();
+		String beforeTitle = e.getTitle();
+		OffsetDateTime beforeStartsAt = e.getStartsAt();
+		boolean beforeMandatory = e.isMandatory();
+
 		if (req.periodId() != null && !req.periodId().equals(e.getPeriodId())) {
 			periods.findById(req.periodId()).orElseThrow(() -> ApiErrors.badRequest("Period not found"));
 			e.setPeriodId(req.periodId());
@@ -123,6 +143,28 @@ public class EventService {
 		}
 
 		events.save(e);
+
+		// AUDIT: event updated
+		var d = audit.obj();
+		audit.put(d, "eventId", e.getId());
+
+		var before = audit.obj();
+		audit.put(before, "periodId", beforePeriodId);
+		audit.put(before, "title", beforeTitle);
+		audit.put(before, "startsAt", beforeStartsAt == null ? null : beforeStartsAt.toString());
+		audit.put(before, "mandatory", beforeMandatory);
+
+		var after = audit.obj();
+		audit.put(after, "periodId", e.getPeriodId());
+		audit.put(after, "title", e.getTitle());
+		audit.put(after, "startsAt", e.getStartsAt() == null ? null : e.getStartsAt().toString());
+		audit.put(after, "mandatory", e.isMandatory());
+
+		d.set("before", before);
+		d.set("after", after);
+
+		audit.log(actor, "event.update", d);
+
 		return toDto(e);
 	}
 
@@ -147,6 +189,12 @@ public class EventService {
 
 		e.setDeletedAt(OffsetDateTime.now());
 		events.save(e);
+
+		// AUDIT: event deleted
+		var d = audit.obj();
+		audit.put(d, "eventId", e.getId());
+		audit.put(d, "deletedAt", e.getDeletedAt() == null ? null : e.getDeletedAt().toString());
+		audit.log(actor, "event.delete", d);
 	}
 
 	private static boolean hasRole(UserEntity u, UserRole role) {

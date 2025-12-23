@@ -2,6 +2,7 @@ package moe.herz.verhaarmbackend.finesuggestion;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import moe.herz.verhaarmbackend.audit.AuditLogService;
 import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.fine.FineEntity;
 import moe.herz.verhaarmbackend.fine.FineRepository;
@@ -27,6 +28,7 @@ public class FineSuggestionService {
 	private final FineRepository fines;
 	private final ConventPeriodRepository periods;
 	private final FineCatalogRepository catalog;
+	private final AuditLogService audit;
 
 	@PersistenceContext
 	private EntityManager em;
@@ -35,18 +37,19 @@ public class FineSuggestionService {
 			FineSuggestionRepository suggestions,
 			FineRepository fines,
 			ConventPeriodRepository periods,
-			FineCatalogRepository catalog
+			FineCatalogRepository catalog,
+			AuditLogService audit
 	) {
 		this.suggestions = suggestions;
 		this.fines = fines;
 		this.periods = periods;
 		this.catalog = catalog;
+		this.audit = audit;
 	}
 
 	@Transactional(readOnly = true)
 	public List<FineSuggestionDto> listForActor(UserEntity actor, FineSuggestionStatus statusOrNull) {
 		if (!(hasRole(actor, UserRole.ADMIN) || hasRole(actor, UserRole.SENIOR) || hasRole(actor, UserRole.HOUSEKEEPING))) {
-			// MEMBERS are not allowed to see the global suggestions list
 			throw ApiErrors.forbidden("Forbidden");
 		}
 
@@ -65,7 +68,6 @@ public class FineSuggestionService {
 		boolean staff = hasRole(actor, UserRole.ADMIN) || hasRole(actor, UserRole.SENIOR) || hasRole(actor, UserRole.HOUSEKEEPING);
 		if (staff) return toDto(s);
 
-		// creator can see own suggestion
 		if (s.getCreatorUserId().equals(actor.getId())) return toDto(s);
 
 		throw ApiErrors.forbidden("Forbidden");
@@ -87,7 +89,6 @@ public class FineSuggestionService {
 		FineType type;
 
 		if (catalogItemId != null) {
-			// For suggestion creation we validate active/visible catalog item (same as fine create UI)
 			FineCatalogItemEntity item = catalog.findActiveVisibleById(catalogItemId)
 					.orElseThrow(() -> ApiErrors.badRequest("Catalog item not found or inactive"));
 
@@ -110,9 +111,6 @@ public class FineSuggestionService {
 		}
 
 		if (amountCents < 0) throw ApiErrors.badRequest("Amount must be >= 0");
-
-		// Note: suggestions are allowed even in locked periods (they do not affect balances).
-		// Acceptance will enforce the official fine creation rules.
 
 		FineSuggestionEntity s = new FineSuggestionEntity(
 				UUID.randomUUID(),
@@ -155,25 +153,21 @@ public class FineSuggestionService {
 
 		boolean isAdmin = hasRole(actor, UserRole.ADMIN);
 		boolean isSenior = hasRole(actor, UserRole.SENIOR);
-		boolean isHousekeeping = hasRole(actor, UserRole.HOUSEKEEPING);
 
-		// Acceptance creates an OFFICIAL fine, so we enforce the same locked-period rules:
 		if (period.isLocked() && !(isAdmin || isSenior)) {
 			throw ApiErrors.forbidden("Cannot accept suggestions into locked period");
 		}
 
-		// Create official fine directly (so we can preserve the suggestion snapshot).
 		FineEntity f = new FineEntity(
 				UUID.randomUUID(),
 				s.getPeriodId(),
-				actor.getId(),              // accepting person becomes the creator
+				actor.getId(),
 				s.getCatalogItemId(),
 				s.getReason(),
 				s.getAmountCents(),
 				s.getType()
 		);
 
-		// Store suggester metadata on the fine (binding requirement)
 		f.setSuggesterUserId(s.getCreatorUserId());
 		f.setAcceptedFromSuggestionId(s.getId());
 
@@ -183,12 +177,24 @@ public class FineSuggestionService {
 
 		fines.save(f);
 
-		// Mark suggestion accepted
 		s.markAccepted(actor.getId(), f.getId());
 		suggestions.save(s);
 
 		em.flush();
 		em.clear();
+
+		// AUDIT: suggestion accepted
+		var d = audit.obj();
+		audit.put(d, "suggestionId", s.getId());
+		audit.put(d, "periodId", s.getPeriodId());
+		audit.put(d, "fineId", f.getId());
+		audit.put(d, "suggesterUserId", s.getCreatorUserId());
+		audit.put(d, "catalogItemId", s.getCatalogItemId());
+		audit.put(d, "reason", s.getReason());
+		audit.put(d, "amountCents", s.getAmountCents());
+		audit.put(d, "type", s.getType() == null ? null : s.getType().name());
+		audit.putUuidArray(d, "targetUserIds", s.getTargetUserIds());
+		audit.log(actor, "fineSuggestion.accept", d);
 
 		return new FineDtoAcceptResult(s.getId(), f.getId());
 	}
@@ -207,6 +213,13 @@ public class FineSuggestionService {
 
 		s.markRejected(actor.getId());
 		suggestions.save(s);
+
+		// AUDIT: suggestion rejected
+		var d = audit.obj();
+		audit.put(d, "suggestionId", s.getId());
+		audit.put(d, "periodId", s.getPeriodId());
+		audit.put(d, "suggesterUserId", s.getCreatorUserId());
+		audit.log(actor, "fineSuggestion.reject", d);
 	}
 
 	public record FineDtoAcceptResult(UUID suggestionId, UUID fineId) {}

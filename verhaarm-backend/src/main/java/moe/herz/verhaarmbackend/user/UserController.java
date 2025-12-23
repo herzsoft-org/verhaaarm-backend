@@ -20,13 +20,13 @@ import java.util.UUID;
 public class UserController {
 
 	private final UserService users;
+	private final UserRepository userRepo;
 
-	public UserController(UserService users) {
+	public UserController(UserService users, UserRepository userRepo) {
 		this.users = users;
+		this.userRepo = userRepo;
 	}
 
-	// Any authenticated user: member picker UX
-	// Matches requirement: GET /users?active=true&query=...
 	@GetMapping(params = "active")
 	public List<UserPickerDto> picker(
 			@RequestParam boolean active,
@@ -38,40 +38,41 @@ public class UserController {
 		return users.picker(true, query);
 	}
 
-	// ADMIN+SENIOR: user management list
 	@GetMapping
 	@PreAuthorize("hasAnyRole('ADMIN','SENIOR')")
 	public List<UserDto> listUsers() {
 		return users.listAll();
 	}
 
-	// ADMIN+SENIOR: detail
 	@GetMapping("/{id}")
 	@PreAuthorize("hasAnyRole('ADMIN','SENIOR')")
 	public UserDto get(@PathVariable UUID id) {
 		return users.getUser(id);
 	}
 
-	// ADMIN only: create
 	@PostMapping
 	@PreAuthorize("hasRole('ADMIN')")
 	public UserDto create(@Valid @RequestBody CreateUserRequest req) {
 		return users.createUser(req);
 	}
 
-	// ADMIN+SENIOR: update
 	@PatchMapping("/{id}")
 	@PreAuthorize("hasAnyRole('ADMIN','SENIOR')")
 	public UserDto update(@PathVariable UUID id, @Valid @RequestBody UpdateUserRequest req, Authentication auth) {
-		boolean isAdmin = auth != null && auth.getAuthorities().stream().anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
-		return users.updateUser(id, req, isAdmin);
+		UserEntity actor = resolveActor(auth);
+		return users.updateUser(id, req, actor);
 	}
 
-	// ADMIN+SENIOR: set password
 	@PatchMapping("/{id}/password")
 	@PreAuthorize("hasAnyRole('ADMIN','SENIOR')")
 	public ResponseEntity<Void> setPassword(@PathVariable UUID id, @RequestBody Map<String, String> body) {
 		users.setPassword(id, body.get("password"));
 		return ResponseEntity.noContent().build();
+	}
+
+	private UserEntity resolveActor(Authentication auth) {
+		if (auth == null || auth.getName() == null || auth.getName().isBlank()) return null;
+		// JwtAuthFilter typically sets auth.setName(username)
+		return userRepo.findByUsername(auth.getName()).orElse(null);
 	}
 }

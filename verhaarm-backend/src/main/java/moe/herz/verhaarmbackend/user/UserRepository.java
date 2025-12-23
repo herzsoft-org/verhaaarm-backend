@@ -56,15 +56,21 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
 
 	// Prevent lockout: last enabled ADMIN
 	@Query("""
-    select count(distinct u.id)
-    from UserEntity u
-    join u.roles r
-    where u.disabled = false and r.role = moe.herz.verhaarmbackend.user.UserRole.ADMIN
-""")
+        select count(distinct u.id)
+        from UserEntity u
+        join u.roles r
+        where u.disabled = false and r.role = moe.herz.verhaarmbackend.user.UserRole.ADMIN
+    """)
 	long countEnabledAdmins();
 
-
-
+	// Option A: role check without touching a possibly-detached entity
+	@Query("""
+        select count(r) > 0
+        from UserEntity u
+        join u.roles r
+        where u.id = :userId and r.role = :role
+    """)
+	boolean hasRole(@Param("userId") UUID userId, @Param("role") UserRole role);
 
 	Optional<UserEntity> findByUsername(String username);
 

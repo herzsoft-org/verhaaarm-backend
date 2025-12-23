@@ -1,5 +1,6 @@
 package moe.herz.verhaarmbackend.liveevent;
 
+import moe.herz.verhaarmbackend.audit.AuditLogService;
 import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.liveevent.dto.CreateLiveEventRequest;
 import moe.herz.verhaarmbackend.liveevent.dto.LiveEventDto;
@@ -21,24 +22,24 @@ public class LiveEventService {
 	private static final int TTL_HOURS = 6;
 
 	private final LiveEventRepository liveEvents;
+	private final AuditLogService audit;
 
 	@PersistenceContext
 	private EntityManager em;
 
-	public LiveEventService(LiveEventRepository liveEvents) {
+	public LiveEventService(LiveEventRepository liveEvents, AuditLogService audit) {
 		this.liveEvents = liveEvents;
+		this.audit = audit;
 	}
 
 	@Transactional(readOnly = true)
 	public List<LiveEventDto> listActive(UserEntity actor) {
-		// any authenticated user can view
 		return liveEvents.findActiveVisible(OffsetDateTime.now())
 				.stream().map(this::toDto).toList();
 	}
 
 	@Transactional(readOnly = true)
 	public LiveEventDto getVisible(UUID id, UserEntity actor) {
-		// any authenticated user can view, but expired events should not be visible
 		var e = liveEvents.findVisibleById(id).orElseThrow(() -> ApiErrors.notFound("Live event not found"));
 		if (e.getExpiresAt().isBefore(OffsetDateTime.now())) throw ApiErrors.notFound("Live event not found");
 		return toDto(e);
@@ -46,7 +47,6 @@ public class LiveEventService {
 
 	@Transactional
 	public LiveEventDto create(CreateLiveEventRequest req, UserEntity actor) {
-		// any authenticated user can create
 		String title = req.title() == null ? "" : req.title().trim();
 		String place = req.place() == null ? "" : req.place().trim();
 		String description = req.description() == null ? "" : req.description().trim();
@@ -72,6 +72,16 @@ public class LiveEventService {
 		em.clear();
 
 		var reloaded = liveEvents.findById(e.getId()).orElseThrow(() -> ApiErrors.notFound("Live event not found"));
+
+		// AUDIT: live event created
+		var d = audit.obj();
+		audit.put(d, "liveEventId", reloaded.getId());
+		audit.put(d, "title", reloaded.getTitle());
+		audit.put(d, "place", reloaded.getPlace());
+		audit.put(d, "description", reloaded.getDescription());
+		audit.put(d, "expiresAt", reloaded.getExpiresAt() == null ? null : reloaded.getExpiresAt().toString());
+		audit.log(actor, "liveEvent.create", d);
+
 		return toDto(reloaded);
 	}
 
@@ -81,6 +91,11 @@ public class LiveEventService {
 		if (e.getExpiresAt().isBefore(OffsetDateTime.now())) throw ApiErrors.notFound("Live event not found");
 
 		requireCanModify(e, actor);
+
+		// snapshot before
+		String beforeTitle = e.getTitle();
+		String beforePlace = e.getPlace();
+		String beforeDesc = e.getDescription();
 
 		if (req.title() != null) {
 			String title = req.title().trim();
@@ -99,6 +114,26 @@ public class LiveEventService {
 		}
 
 		liveEvents.save(e);
+
+		// AUDIT: live event updated
+		var d = audit.obj();
+		audit.put(d, "liveEventId", e.getId());
+
+		var before = audit.obj();
+		audit.put(before, "title", beforeTitle);
+		audit.put(before, "place", beforePlace);
+		audit.put(before, "description", beforeDesc);
+
+		var after = audit.obj();
+		audit.put(after, "title", e.getTitle());
+		audit.put(after, "place", e.getPlace());
+		audit.put(after, "description", e.getDescription());
+
+		d.set("before", before);
+		d.set("after", after);
+
+		audit.log(actor, "liveEvent.update", d);
+
 		return toDto(e);
 	}
 
@@ -111,6 +146,12 @@ public class LiveEventService {
 
 		e.setDeletedAt(OffsetDateTime.now());
 		liveEvents.save(e);
+
+		// AUDIT: live event deleted
+		var d = audit.obj();
+		audit.put(d, "liveEventId", e.getId());
+		audit.put(d, "deletedAt", e.getDeletedAt() == null ? null : e.getDeletedAt().toString());
+		audit.log(actor, "liveEvent.delete", d);
 	}
 
 	private void requireCanModify(LiveEventEntity e, UserEntity actor) {

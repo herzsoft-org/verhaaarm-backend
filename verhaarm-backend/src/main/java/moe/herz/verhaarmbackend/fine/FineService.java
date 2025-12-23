@@ -1,5 +1,6 @@
 package moe.herz.verhaarmbackend.fine;
 
+import moe.herz.verhaarmbackend.audit.AuditLogService;
 import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.fine.dto.CreateFineRequest;
 import moe.herz.verhaarmbackend.fine.dto.FineDto;
@@ -23,14 +24,16 @@ public class FineService {
 	private final FineRepository fines;
 	private final ConventPeriodRepository periods;
 	private final FineCatalogRepository catalog;
+	private final AuditLogService audit;
 
 	@PersistenceContext
 	private EntityManager em;
 
-	public FineService(FineRepository fines, ConventPeriodRepository periods, FineCatalogRepository catalog) {
+	public FineService(FineRepository fines, ConventPeriodRepository periods, FineCatalogRepository catalog, AuditLogService audit) {
 		this.fines = fines;
 		this.periods = periods;
 		this.catalog = catalog;
+		this.audit = audit;
 	}
 
 	@Transactional(readOnly = true)
@@ -75,7 +78,6 @@ public class FineService {
 		FineType type;
 
 		if (catalogItemId != null) {
-			// only allow active + not deleted catalog items
 			FineCatalogItemEntity item = catalog.findActiveVisibleById(catalogItemId)
 					.orElseThrow(() -> ApiErrors.badRequest("Catalog item not found or inactive"));
 
@@ -115,12 +117,24 @@ public class FineService {
 
 		fines.save(f);
 
-		// Ensure DB-generated columns (created_at) are available
 		em.flush();
 		em.clear();
 
 		var reloaded = fines.findVisibleById(f.getId())
 				.orElseThrow(() -> ApiErrors.notFound("Fine not found"));
+
+		// AUDIT: fine created
+		var d = audit.obj();
+		audit.put(d, "fineId", reloaded.getId());
+		audit.put(d, "periodId", reloaded.getPeriodId());
+		audit.put(d, "creatorUserId", reloaded.getCreatorUserId());
+		audit.put(d, "catalogItemId", reloaded.getCatalogItemId());
+		audit.put(d, "reason", reloaded.getReason());
+		audit.put(d, "amountCents", reloaded.getAmountCents());
+		audit.put(d, "type", reloaded.getType() == null ? null : reloaded.getType().name());
+		audit.putUuidArray(d, "targetUserIds", reloaded.getTargetUserIds());
+		audit.log(actor, "fine.create", d);
+
 		return toDto(reloaded);
 	}
 
@@ -147,6 +161,14 @@ public class FineService {
 			}
 		}
 
+		// snapshot before
+		UUID beforePeriodId = f.getPeriodId();
+		String beforeReason = f.getReason();
+		Integer beforeAmount = f.getAmountCents();
+		UUID beforeCatalogItemId = f.getCatalogItemId();
+		FineType beforeType = f.getType();
+		Set<UUID> beforeTargets = Set.copyOf(f.getTargetUserIds());
+
 		UUID newPeriodId = req.periodId() != null ? req.periodId() : f.getPeriodId();
 		if (!newPeriodId.equals(f.getPeriodId())) {
 			var newPeriod = periods.findById(newPeriodId).orElseThrow(() -> ApiErrors.badRequest("Period not found"));
@@ -168,7 +190,6 @@ public class FineService {
 		}
 
 		if (req.catalogItemId() != null) {
-			// validate catalog item
 			catalog.findActiveVisibleById(req.catalogItemId())
 					.orElseThrow(() -> ApiErrors.badRequest("Catalog item not found or inactive"));
 
@@ -189,6 +210,32 @@ public class FineService {
 
 		var reloaded = fines.findVisibleById(f.getId())
 				.orElseThrow(() -> ApiErrors.notFound("Fine not found"));
+
+		// AUDIT: fine updated (before/after)
+		var d = audit.obj();
+		audit.put(d, "fineId", reloaded.getId());
+
+		var before = audit.obj();
+		audit.put(before, "periodId", beforePeriodId);
+		audit.put(before, "reason", beforeReason);
+		audit.put(before, "amountCents", beforeAmount);
+		audit.put(before, "catalogItemId", beforeCatalogItemId);
+		audit.put(before, "type", beforeType == null ? null : beforeType.name());
+		audit.putUuidArray(before, "targetUserIds", beforeTargets);
+
+		var after = audit.obj();
+		audit.put(after, "periodId", reloaded.getPeriodId());
+		audit.put(after, "reason", reloaded.getReason());
+		audit.put(after, "amountCents", reloaded.getAmountCents());
+		audit.put(after, "catalogItemId", reloaded.getCatalogItemId());
+		audit.put(after, "type", reloaded.getType() == null ? null : reloaded.getType().name());
+		audit.putUuidArray(after, "targetUserIds", reloaded.getTargetUserIds());
+
+		d.set("before", before);
+		d.set("after", after);
+
+		audit.log(actor, "fine.update", d);
+
 		return toDto(reloaded);
 	}
 
@@ -217,6 +264,13 @@ public class FineService {
 
 		f.setDeletedAt(OffsetDateTime.now());
 		fines.save(f);
+
+		// AUDIT: fine deleted (soft delete)
+		var d = audit.obj();
+		audit.put(d, "fineId", f.getId());
+		audit.put(d, "periodId", f.getPeriodId());
+		audit.put(d, "deletedAt", f.getDeletedAt() == null ? null : f.getDeletedAt().toString());
+		audit.log(actor, "fine.delete", d);
 	}
 
 	private static boolean hasRole(UserEntity u, UserRole role) {

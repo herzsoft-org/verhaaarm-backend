@@ -1,5 +1,6 @@
 package moe.herz.verhaarmbackend.common;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -32,11 +33,6 @@ public class GlobalExceptionHandler {
 		));
 	}
 
-	/**
-	 * Covers cases like:
-	 *  - /fine-catalog/<ID> where <ID> is not a UUID
-	 *  - invalid query param types
-	 */
 	@ExceptionHandler(MethodArgumentTypeMismatchException.class)
 	public ResponseEntity<?> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
 		return ResponseEntity.badRequest().body(Map.of(
@@ -45,14 +41,29 @@ public class GlobalExceptionHandler {
 		));
 	}
 
-	/**
-	 * Covers malformed JSON bodies.
-	 */
 	@ExceptionHandler(HttpMessageNotReadableException.class)
 	public ResponseEntity<?> handleBadJson(HttpMessageNotReadableException ex) {
 		return ResponseEntity.badRequest().body(Map.of(
 				"error", "Bad Request",
 				"details", "Malformed JSON"
+		));
+	}
+
+	@ExceptionHandler(DataIntegrityViolationException.class)
+	public ResponseEntity<?> handleDataIntegrity(DataIntegrityViolationException ex) {
+		String msg = ex.getMostSpecificCause() != null ? ex.getMostSpecificCause().getMessage() : ex.getMessage();
+		return ResponseEntity.status(409).body(Map.of(
+				"error", "Conflict",
+				"details", msg
+		));
+	}
+
+	// Pragmatic fallback so you actually see what blew up during dev
+	@ExceptionHandler(Exception.class)
+	public ResponseEntity<?> handleGeneric(Exception ex) {
+		return ResponseEntity.status(500).body(Map.of(
+				"error", "Internal Server Error",
+				"details", ex.getClass().getSimpleName() + ": " + ex.getMessage()
 		));
 	}
 }
