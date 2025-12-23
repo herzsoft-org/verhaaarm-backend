@@ -2,8 +2,10 @@ package moe.herz.verhaarmbackend.user;
 
 import moe.herz.verhaarmbackend.audit.AuditLogService;
 import moe.herz.verhaarmbackend.common.ApiErrors;
+import moe.herz.verhaarmbackend.fine.FineRepository;
 import moe.herz.verhaarmbackend.user.dto.CreateUserRequest;
 import moe.herz.verhaarmbackend.user.dto.UpdateUserRequest;
+import moe.herz.verhaarmbackend.user.dto.UserBalanceDto;
 import moe.herz.verhaarmbackend.user.dto.UserDto;
 import moe.herz.verhaarmbackend.user.dto.UserPickerDto;
 
@@ -18,11 +20,13 @@ import java.util.stream.Collectors;
 public class UserService {
 
 	private final UserRepository users;
+	private final FineRepository fines;
 	private final PasswordEncoder encoder;
 	private final AuditLogService audit;
 
-	public UserService(UserRepository users, PasswordEncoder encoder, AuditLogService audit) {
+	public UserService(UserRepository users, FineRepository fines, PasswordEncoder encoder, AuditLogService audit) {
 		this.users = users;
+		this.fines = fines;
 		this.encoder = encoder;
 		this.audit = audit;
 	}
@@ -60,6 +64,54 @@ public class UserService {
 				.stream()
 				.map(u -> new UserPickerDto(u.getId(), u.getUsername(), u.getDisplayName()))
 				.toList();
+	}
+
+	// --------------------
+	// BALANCE
+	// --------------------
+
+	/**
+	 * Balance = sum(amount_cents) of all non-deleted fines where target user is included.
+	 * Suggestions do not count unless accepted (accepted suggestions are real fines already).
+	 *
+	 * Access:
+	 *  - MEMBER-only: may view only own balance
+	 *  - ADMIN/SENIOR/HOUSEKEEPING/TREASURER: may view any user's balance
+	 */
+	@Transactional(readOnly = true)
+	public UserBalanceDto getBalance(UUID targetUserId, UUID periodIdOrNull, UserEntity actor) {
+		if (actor == null) throw ApiErrors.forbidden("Forbidden");
+
+		// ensure target exists (keeps API consistent)
+		users.findById(targetUserId).orElseThrow(() -> ApiErrors.notFound("User not found"));
+
+		boolean isSelf = actor.getId() != null && actor.getId().equals(targetUserId);
+
+		if (!isSelf && !isStaff(actor.getId())) {
+			throw ApiErrors.forbidden("Forbidden");
+		}
+
+		long cents = (periodIdOrNull == null)
+				? fines.sumVisibleAmountCentsForTarget(targetUserId)
+				: fines.sumVisibleAmountCentsForTargetInPeriod(targetUserId, periodIdOrNull);
+
+		return new UserBalanceDto(targetUserId, cents, formatEurFromCents(cents));
+	}
+
+	private boolean isStaff(UUID actorId) {
+		if (actorId == null) return false;
+		return users.hasRole(actorId, UserRole.ADMIN)
+				|| users.hasRole(actorId, UserRole.SENIOR)
+				|| users.hasRole(actorId, UserRole.HOUSEKEEPING)
+				|| users.hasRole(actorId, UserRole.TREASURER);
+	}
+
+	private static String formatEurFromCents(long cents) {
+		long abs = Math.abs(cents);
+		long euros = abs / 100;
+		long rem = abs % 100;
+		String sign = cents < 0 ? "-" : "";
+		return sign + euros + "," + (rem < 10 ? "0" + rem : Long.toString(rem)) + " €";
 	}
 
 	// --------------------

@@ -1,7 +1,9 @@
 package moe.herz.verhaarmbackend.user;
 
+import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.user.dto.CreateUserRequest;
 import moe.herz.verhaarmbackend.user.dto.UpdateUserRequest;
+import moe.herz.verhaarmbackend.user.dto.UserBalanceDto;
 import moe.herz.verhaarmbackend.user.dto.UserDto;
 import moe.herz.verhaarmbackend.user.dto.UserPickerDto;
 
@@ -70,9 +72,34 @@ public class UserController {
 		return ResponseEntity.noContent().build();
 	}
 
+	// -------- BALANCE --------
+	// periodId optional:
+	//   /users/{id}/balance
+	//   /users/{id}/balance?periodId=<uuid>
+
+	@GetMapping("/{id}/balance")
+	public UserBalanceDto balance(
+			@PathVariable UUID id,
+			@RequestParam(name = "periodId", required = false) UUID periodId,
+			Authentication auth
+	) {
+		UserEntity actor = resolveActor(auth);
+		return users.getBalance(id, periodId, actor);
+	}
+
+	@GetMapping("/me/balance")
+	public UserBalanceDto myBalance(
+			@RequestParam(name = "periodId", required = false) UUID periodId,
+			Authentication auth
+	) {
+		UserEntity actor = resolveActor(auth);
+		if (actor == null) throw ApiErrors.forbidden("Forbidden");
+		return users.getBalance(actor.getId(), periodId, actor);
+	}
+
 	private UserEntity resolveActor(Authentication auth) {
 		if (auth == null || auth.getName() == null || auth.getName().isBlank()) return null;
-		// JwtAuthFilter typically sets auth.setName(username)
+		// JwtAuthFilter sets auth principal to username
 		return userRepo.findByUsername(auth.getName()).orElse(null);
 	}
 }
