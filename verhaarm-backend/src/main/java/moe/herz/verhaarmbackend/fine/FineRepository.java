@@ -17,4 +17,38 @@ public interface FineRepository extends JpaRepository<FineEntity, UUID> {
 
 	@Query("select f from FineEntity f where f.id = :id and f.deletedAt is null")
 	Optional<FineEntity> findVisibleById(UUID id);
+
+	// -------- CSV export (avoid N+1 for targets) --------
+
+	@Query("""
+		select distinct f from FineEntity f
+		left join fetch f.targetUserIds
+		where f.deletedAt is null
+		order by f.createdAt desc
+	""")
+	List<FineEntity> findAllVisibleWithTargets();
+
+	@Query("""
+		select distinct f from FineEntity f
+		left join fetch f.targetUserIds
+		where f.deletedAt is null
+		  and f.periodId = :periodId
+		order by f.createdAt desc
+	""")
+	List<FineEntity> findVisibleByPeriodWithTargets(UUID periodId);
+
+	@Query("""
+		select distinct f from FineEntity f
+		left join fetch f.targetUserIds
+		order by f.createdAt desc
+	""")
+	List<FineEntity> findAllIncludingDeletedWithTargets();
+
+	@Query("""
+		select distinct f from FineEntity f
+		left join fetch f.targetUserIds
+		where f.periodId = :periodId
+		order by f.createdAt desc
+	""")
+	List<FineEntity> findAllIncludingDeletedByPeriodWithTargets(UUID periodId);
 }
