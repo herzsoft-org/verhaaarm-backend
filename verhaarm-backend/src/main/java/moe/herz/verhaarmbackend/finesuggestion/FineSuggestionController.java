@@ -32,6 +32,7 @@ public class FineSuggestionController {
 	@GetMapping
 	public List<FineSuggestionDto> list(
 			@RequestParam(required = false) String status,
+			@RequestParam(required = false, defaultValue = "false") boolean mine,
 			Authentication auth
 	) {
 		UserEntity actor = actor(auth);
@@ -45,8 +46,9 @@ public class FineSuggestionController {
 			}
 		}
 
-		return fineSuggestions.listForActor(actor, parsed);
+		return fineSuggestions.listForActor(actor, parsed, mine);
 	}
+
 
 	@GetMapping("/{id}")
 	public FineSuggestionDto get(@PathVariable UUID id, Authentication auth) {

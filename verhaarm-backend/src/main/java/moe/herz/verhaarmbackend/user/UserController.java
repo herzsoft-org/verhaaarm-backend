@@ -54,8 +54,9 @@ public class UserController {
 
 	@PostMapping
 	@PreAuthorize("hasRole('ADMIN')")
-	public UserDto create(@Valid @RequestBody CreateUserRequest req) {
-		return users.createUser(req);
+	public UserDto create(@Valid @RequestBody CreateUserRequest req, Authentication auth) {
+		UserEntity actor = resolveActor(auth);
+		return users.createUser(req, actor);
 	}
 
 	@PatchMapping("/{id}")
@@ -65,12 +66,27 @@ public class UserController {
 		return users.updateUser(id, req, actor);
 	}
 
+	/**
+	 * Password change policy:
+	 *  - user may change own password
+	 *  - only ADMIN may change another user's password
+	 */
 	@PatchMapping("/{id}/password")
-	@PreAuthorize("hasAnyRole('ADMIN','SENIOR')")
-	public ResponseEntity<Void> setPassword(@PathVariable UUID id, @RequestBody Map<String, String> body) {
-		users.setPassword(id, body.get("password"));
+	@PreAuthorize("isAuthenticated()")
+	public ResponseEntity<Void> setPassword(
+			@PathVariable UUID id,
+			@RequestBody Map<String, String> body,
+			Authentication auth
+	) {
+		UserEntity actor = resolveActor(auth);
+		if (actor == null) throw ApiErrors.forbidden("Forbidden");
+
+		String password = body == null ? null : body.get("password");
+		users.setPassword(id, password, actor);
+
 		return ResponseEntity.noContent().build();
 	}
+
 
 	// -------- BALANCE --------
 	// periodId optional:

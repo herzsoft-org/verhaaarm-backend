@@ -3,6 +3,7 @@ package moe.herz.verhaarmbackend.user;
 import moe.herz.verhaarmbackend.audit.AuditLogService;
 import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.fine.FineRepository;
+import moe.herz.verhaarmbackend.period.ConventPeriodRepository;
 import moe.herz.verhaarmbackend.user.dto.CreateUserRequest;
 import moe.herz.verhaarmbackend.user.dto.UpdateUserRequest;
 import moe.herz.verhaarmbackend.user.dto.UserBalanceDto;
@@ -21,12 +22,20 @@ public class UserService {
 
 	private final UserRepository users;
 	private final FineRepository fines;
+	private final ConventPeriodRepository periods;
 	private final PasswordEncoder encoder;
 	private final AuditLogService audit;
 
-	public UserService(UserRepository users, FineRepository fines, PasswordEncoder encoder, AuditLogService audit) {
+	public UserService(
+			UserRepository users,
+			FineRepository fines,
+			ConventPeriodRepository periods,
+			PasswordEncoder encoder,
+			AuditLogService audit
+	) {
 		this.users = users;
 		this.fines = fines;
+		this.periods = periods;
 		this.encoder = encoder;
 		this.audit = audit;
 	}
@@ -74,9 +83,9 @@ public class UserService {
 	 * Balance = sum(amount_cents) of all non-deleted fines where target user is included.
 	 * Suggestions do not count unless accepted (accepted suggestions are real fines already).
 	 *
-	 * Access:
-	 *  - MEMBER-only: may view only own balance
-	 *  - ADMIN/SENIOR/HOUSEKEEPING/TREASURER: may view any user's balance
+	 * periodId behavior (per your requirement):
+	 *  - if periodId is null => use ACTIVE period only
+	 *  - if periodId provided => that specific period
 	 */
 	@Transactional(readOnly = true)
 	public UserBalanceDto getBalance(UUID targetUserId, UUID periodIdOrNull, UserEntity actor) {
@@ -91,9 +100,14 @@ public class UserService {
 			throw ApiErrors.forbidden("Forbidden");
 		}
 
-		long cents = (periodIdOrNull == null)
-				? fines.sumVisibleAmountCentsForTarget(targetUserId)
-				: fines.sumVisibleAmountCentsForTargetInPeriod(targetUserId, periodIdOrNull);
+		UUID periodId = periodIdOrNull;
+		if (periodId == null) {
+			periodId = periods.findActive()
+					.orElseThrow(() -> ApiErrors.notFound("No active period"))
+					.getId();
+		}
+
+		long cents = fines.sumVisibleAmountCentsForTargetInPeriod(targetUserId, periodId);
 
 		return new UserBalanceDto(targetUserId, cents, formatEurFromCents(cents));
 	}
@@ -119,7 +133,12 @@ public class UserService {
 	// --------------------
 
 	@Transactional
-	public UserDto createUser(CreateUserRequest req) {
+	public UserDto createUser(CreateUserRequest req, UserEntity actor) {
+		// Only ADMIN can create users (controller already enforces, but keep it safe here)
+		if (actor == null || !users.hasRole(actor.getId(), UserRole.ADMIN)) {
+			throw ApiErrors.forbidden("Forbidden");
+		}
+
 		String username = req.username();
 		String normalized = UsernameNormalizer.normalize(username);
 
@@ -144,6 +163,15 @@ public class UserService {
 		for (UserRole r : newRoles) u.addRole(r);
 
 		users.save(u);
+
+		// AUDIT: user created
+		var d = audit.obj();
+		audit.put(d, "targetUserId", u.getId());
+		audit.put(d, "targetUsername", u.getUsername());
+		audit.put(d, "targetDisplayName", u.getDisplayName());
+		audit.putStringArray(d, "roles", newRoles.stream().map(Enum::name).sorted().toList());
+		audit.log(actor, "user.create", d);
+
 		return toDto(u);
 	}
 
@@ -234,17 +262,38 @@ public class UserService {
 		return toDto(u);
 	}
 
+	/**
+	 * Password change policy:
+	 *  - actor may change own password
+	 *  - only ADMIN may change another user's password
+	 */
 	@Transactional
-	public void setPassword(UUID id, String password) {
+	public void setPassword(UUID targetUserId, String password, UserEntity actor) {
+		if (actor == null || actor.getId() == null) throw ApiErrors.forbidden("Forbidden");
+
 		if (password == null || password.isBlank()) {
 			throw ApiErrors.badRequest("Password required");
 		}
 
-		UserEntity u = users.findById(id)
+		boolean self = actor.getId().equals(targetUserId);
+		boolean admin = users.hasRole(actor.getId(), UserRole.ADMIN);
+
+		if (!self && !admin) {
+			throw ApiErrors.forbidden("Only ADMIN may change another user's password");
+		}
+
+		UserEntity u = users.findById(targetUserId)
 				.orElseThrow(() -> ApiErrors.notFound("User not found"));
 
 		u.setPasswordHash(encoder.encode(password));
 		users.save(u);
+
+		// AUDIT: password changed (no password logged)
+		var d = audit.obj();
+		audit.put(d, "targetUserId", u.getId());
+		audit.put(d, "targetUsername", u.getUsername());
+		audit.put(d, "self", self);
+		audit.log(actor, "user.passwordChanged", d);
 	}
 
 	// --------------------

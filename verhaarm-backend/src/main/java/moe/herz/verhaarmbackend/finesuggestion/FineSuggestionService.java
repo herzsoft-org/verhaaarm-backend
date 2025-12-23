@@ -48,17 +48,34 @@ public class FineSuggestionService {
 	}
 
 	@Transactional(readOnly = true)
-	public List<FineSuggestionDto> listForActor(UserEntity actor, FineSuggestionStatus statusOrNull) {
-		if (!(hasRole(actor, UserRole.ADMIN) || hasRole(actor, UserRole.SENIOR) || hasRole(actor, UserRole.HOUSEKEEPING))) {
-			throw ApiErrors.forbidden("Forbidden");
-		}
+	public List<FineSuggestionDto> listForActor(UserEntity actor, FineSuggestionStatus statusOrNull, boolean mineOnly) {
+		if (actor == null) throw ApiErrors.forbidden("Forbidden");
 
-		List<FineSuggestionEntity> list = (statusOrNull == null)
-				? suggestions.findAllVisible()
-				: suggestions.findVisibleByStatus(statusOrNull);
+		boolean staff = hasRole(actor, UserRole.ADMIN) || hasRole(actor, UserRole.SENIOR) || hasRole(actor, UserRole.HOUSEKEEPING);
+
+		List<FineSuggestionEntity> list;
+
+		if (mineOnly || !staff) {
+			// MEMBER (or anyone requesting mineOnly) => only own suggestions
+			list = (statusOrNull == null)
+					? suggestions.findVisibleByCreator(actor.getId())
+					: suggestions.findVisibleByCreatorAndStatus(actor.getId(), statusOrNull);
+		} else {
+			// staff default => all
+			list = (statusOrNull == null)
+					? suggestions.findAllVisible()
+					: suggestions.findVisibleByStatus(statusOrNull);
+		}
 
 		return list.stream().map(this::toDto).toList();
 	}
+
+	@Transactional(readOnly = true)
+	public List<FineSuggestionDto> listForActor(UserEntity actor, FineSuggestionStatus statusOrNull) {
+		return listForActor(actor, statusOrNull, false);
+	}
+
+
 
 	@Transactional(readOnly = true)
 	public FineSuggestionDto getForActor(UUID id, UserEntity actor) {

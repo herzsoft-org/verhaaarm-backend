@@ -8,6 +8,10 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.authorization.AuthorizationDeniedException;
+import org.springframework.security.access.AccessDeniedException;
+
 
 import java.util.Map;
 
@@ -57,6 +61,14 @@ public class GlobalExceptionHandler {
 				"details", msg
 		));
 	}
+
+	@ExceptionHandler({AuthorizationDeniedException.class, AccessDeniedException.class})
+	public ResponseEntity<?> handleAccessDenied(Exception ex) {
+		return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+				"error", "Forbidden"
+		));
+	}
+
 
 	// Pragmatic fallback so you actually see what blew up during dev
 	@ExceptionHandler(Exception.class)
