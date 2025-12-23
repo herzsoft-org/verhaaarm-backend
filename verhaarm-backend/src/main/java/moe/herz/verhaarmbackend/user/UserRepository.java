@@ -27,8 +27,44 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
 	@Query("""
         select distinct u from UserEntity u
         left join fetch u.roles r
+        order by u.usernameNormalized asc
     """)
-	List<UserEntity> findAllWithRoles();
+	List<UserEntity> findAllWithRolesOrdered();
+
+	@Query("""
+        select distinct u from UserEntity u
+        left join fetch u.roles r
+        where u.disabled = false
+    """)
+	List<UserEntity> findAllEnabledWithRoles();
+
+	// Picker: only enabled users, minimal data, sorted.
+	@Query("""
+        select u from UserEntity u
+        where u.disabled = false
+          and (
+            :qNorm = '' 
+            or u.usernameNormalized like concat('%', :qNorm, '%')
+            or lower(u.displayName) like concat('%', :qLower, '%')
+          )
+        order by u.usernameNormalized asc
+    """)
+	List<UserEntity> searchActiveForPicker(
+			@Param("qNorm") String qNorm,
+			@Param("qLower") String qLower
+	);
+
+	// Prevent lockout: last enabled ADMIN
+	@Query("""
+    select count(distinct u.id)
+    from UserEntity u
+    join u.roles r
+    where u.disabled = false and r.role = moe.herz.verhaarmbackend.user.UserRole.ADMIN
+""")
+	long countEnabledAdmins();
+
+
+
 
 	Optional<UserEntity> findByUsername(String username);
 

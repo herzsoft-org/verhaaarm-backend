@@ -17,50 +17,67 @@ import java.util.stream.Collectors;
 public class UserService {
 
 	private final UserRepository users;
-	private final UserRoleRepository rolesRepo;
 	private final PasswordEncoder encoder;
 
-	public UserService(UserRepository users, UserRoleRepository rolesRepo, PasswordEncoder encoder) {
+	public UserService(UserRepository users, PasswordEncoder encoder) {
 		this.users = users;
-		this.rolesRepo = rolesRepo;
 		this.encoder = encoder;
 	}
 
+	// --------------------
+	// READ
+	// --------------------
+
 	@Transactional(readOnly = true)
 	public List<UserDto> listAll() {
-		// roles are needed for DTO => use fetch-join query
-		return users.findAllWithRoles().stream().map(this::toDto).toList();
+		// roles needed → fetch-join, ordered
+		return users.findAllWithRolesOrdered()
+				.stream()
+				.map(this::toDto)
+				.toList();
+	}
+
+	@Transactional(readOnly = true)
+	public UserDto getUser(UUID id) {
+		UserEntity u = users.findByIdWithRoles(id)
+				.orElseThrow(() -> ApiErrors.notFound("User not found"));
+		return toDto(u);
 	}
 
 	@Transactional(readOnly = true)
 	public List<UserPickerDto> picker(boolean activeOnly, String query) {
-		// picker does not need roles; keep it cheap
-		String q = query == null ? "" : UsernameNormalizer.normalize(query);
-		return users.findAll().stream()
-				.filter(u -> !activeOnly || !u.isDisabled())
-				.filter(u -> q.isBlank()
-						|| u.getUsernameNormalized().contains(q)
-						|| UsernameNormalizer.normalize(u.getDisplayName()).contains(q))
-				.sorted(Comparator.comparing(UserEntity::getUsernameNormalized))
+		if (!activeOnly) {
+			throw ApiErrors.badRequest("Only active=true is supported");
+		}
+
+		String raw = query == null ? "" : query.trim();
+		String qNorm = UsernameNormalizer.normalize(raw);
+		String qLower = raw.toLowerCase(Locale.ROOT);
+
+		return users.searchActiveForPicker(qNorm, qLower)
+				.stream()
 				.map(u -> new UserPickerDto(u.getId(), u.getUsername(), u.getDisplayName()))
 				.toList();
 	}
+
+	// --------------------
+	// CREATE
+	// --------------------
 
 	@Transactional
 	public UserDto createUser(CreateUserRequest req) {
 		String username = req.username();
 		String normalized = UsernameNormalizer.normalize(username);
 
-		// ensure case/spacing-insensitive uniqueness as well
 		if (users.existsByUsername(username) || users.existsByUsernameNormalized(normalized)) {
 			throw ApiErrors.badRequest("Username already exists");
 		}
 
-		Set<UserRole> parsedRoles = parseRoles(req.roles());
-		if (parsedRoles.isEmpty()) parsedRoles = Set.of(UserRole.MEMBER);
+		Set<UserRole> newRoles = parseRoles(req.roles());
+		if (newRoles.isEmpty()) newRoles = Set.of(UserRole.MEMBER);
 
-		// constraints apply to enabled users; new user is enabled by default
-		validateRoleConstraintsOnChange(null, false, parsedRoles, false);
+		// New user is enabled by default
+		validateRoleConstraintsOnChange(null, false, newRoles, false);
 
 		UserEntity u = new UserEntity(
 				UUID.randomUUID(),
@@ -71,28 +88,44 @@ public class UserService {
 		);
 
 		u.clearRoles();
-		for (UserRole r : parsedRoles) u.addRole(r);
+		for (UserRole r : newRoles) u.addRole(r);
 
 		users.save(u);
-
-		// ensure roles are initialized for DTO (they should be in-memory already, but keep consistent)
 		return toDto(u);
 	}
 
+	// --------------------
+	// UPDATE
+	// --------------------
+
 	@Transactional
 	public UserDto updateUser(UUID id, UpdateUserRequest req, boolean actorIsAdmin) {
-		// We call toDto() and touch roles => load with roles
-		UserEntity u = users.findByIdWithRoles(id).orElseThrow(() -> ApiErrors.notFound("User not found"));
+		UserEntity u = users.findByIdWithRoles(id)
+				.orElseThrow(() -> ApiErrors.notFound("User not found"));
 
 		Set<UserRole> newRoles = parseRoles(req.roles());
 		if (newRoles.isEmpty()) newRoles = Set.of(UserRole.MEMBER);
 
-		// SENIOR may not assign ADMIN
+		// SENIOR cannot assign ADMIN
 		if (!actorIsAdmin && newRoles.contains(UserRole.ADMIN)) {
 			throw ApiErrors.forbidden("SENIOR cannot assign ADMIN role");
 		}
 
 		boolean newDisabled = req.disabled() != null ? req.disabled() : u.isDisabled();
+
+		// Prevent disabling last enabled ADMIN
+		if (newDisabled && !u.isDisabled() && hasRole(u, UserRole.ADMIN)) {
+			if (users.countEnabledAdmins() <= 1) {
+				throw ApiErrors.badRequest("Cannot disable last enabled ADMIN");
+			}
+		}
+
+		// Prevent removing ADMIN from last enabled ADMIN
+		if (hasRole(u, UserRole.ADMIN) && !newRoles.contains(UserRole.ADMIN) && !newDisabled) {
+			if (users.countEnabledAdmins() <= 1) {
+				throw ApiErrors.badRequest("Cannot remove ADMIN from last enabled ADMIN");
+			}
+		}
 
 		validateRoleConstraintsOnChange(u, u.isDisabled(), newRoles, newDisabled);
 
@@ -102,7 +135,6 @@ public class UserService {
 
 		u.setDisabled(newDisabled);
 
-		// replace roles
 		u.clearRoles();
 		for (UserRole r : newRoles) u.addRole(r);
 
@@ -110,57 +142,59 @@ public class UserService {
 		return toDto(u);
 	}
 
+	@Transactional
+	public void setPassword(UUID id, String password) {
+		if (password == null || password.isBlank()) {
+			throw ApiErrors.badRequest("Password required");
+		}
+
+		UserEntity u = users.findById(id)
+				.orElseThrow(() -> ApiErrors.notFound("User not found"));
+
+		u.setPasswordHash(encoder.encode(password));
+		users.save(u);
+	}
+
+	// --------------------
+	// CONSTRAINTS
+	// --------------------
+
 	private void validateRoleConstraintsOnChange(
 			UserEntity targetOrNull,
 			boolean oldDisabled,
 			Set<UserRole> newRoles,
 			boolean newDisabled
 	) {
-		// Constraints among enabled users only:
-		// Exactly one SENIOR, at least one HOUSEKEEPING, at least one TREASURER.
+		// enabled users only
+		List<UserEntity> enabled = users.findAllEnabledWithRoles();
 
-		// Need roles for counting => load all with roles
-		List<UserEntity> all = users.findAllWithRoles();
+		long seniors = enabled.stream().filter(u -> hasRole(u, UserRole.SENIOR)).count();
+		long housekeeping = enabled.stream().filter(u -> hasRole(u, UserRole.HOUSEKEEPING)).count();
+		long treasurer = enabled.stream().filter(u -> hasRole(u, UserRole.TREASURER)).count();
 
-		long enabledSenior = all.stream()
-				.filter(u -> !u.isDisabled())
-				.filter(u -> hasRole(u, UserRole.SENIOR))
-				.count();
-
-		long enabledHouse = all.stream()
-				.filter(u -> !u.isDisabled())
-				.filter(u -> hasRole(u, UserRole.HOUSEKEEPING))
-				.count();
-
-		long enabledTreas = all.stream()
-				.filter(u -> !u.isDisabled())
-				.filter(u -> hasRole(u, UserRole.TREASURER))
-				.count();
-
-		// Subtract old target contribution (if target exists and was enabled)
 		if (targetOrNull != null && !oldDisabled) {
-			if (hasRole(targetOrNull, UserRole.SENIOR)) enabledSenior--;
-			if (hasRole(targetOrNull, UserRole.HOUSEKEEPING)) enabledHouse--;
-			if (hasRole(targetOrNull, UserRole.TREASURER)) enabledTreas--;
+			if (hasRole(targetOrNull, UserRole.SENIOR)) seniors--;
+			if (hasRole(targetOrNull, UserRole.HOUSEKEEPING)) housekeeping--;
+			if (hasRole(targetOrNull, UserRole.TREASURER)) treasurer--;
 		}
 
-		// Add new contribution (if target will be enabled)
 		if (!newDisabled) {
-			if (newRoles.contains(UserRole.SENIOR)) enabledSenior++;
-			if (newRoles.contains(UserRole.HOUSEKEEPING)) enabledHouse++;
-			if (newRoles.contains(UserRole.TREASURER)) enabledTreas++;
+			if (newRoles.contains(UserRole.SENIOR)) seniors++;
+			if (newRoles.contains(UserRole.HOUSEKEEPING)) housekeeping++;
+			if (newRoles.contains(UserRole.TREASURER)) treasurer++;
 		}
 
-		if (enabledSenior != 1) {
-			throw ApiErrors.badRequest("Role constraint violated: exactly one SENIOR must exist (enabled users)");
-		}
-		if (enabledHouse < 1) {
-			throw ApiErrors.badRequest("Role constraint violated: at least one HOUSEKEEPING must exist (enabled users)");
-		}
-		if (enabledTreas < 1) {
-			throw ApiErrors.badRequest("Role constraint violated: at least one TREASURER must exist (enabled users)");
-		}
+		if (seniors != 1)
+			throw ApiErrors.badRequest("Exactly one SENIOR must exist (enabled users)");
+		if (housekeeping < 1)
+			throw ApiErrors.badRequest("At least one HOUSEKEEPING must exist (enabled users)");
+		if (treasurer < 1)
+			throw ApiErrors.badRequest("At least one TREASURER must exist (enabled users)");
 	}
+
+	// --------------------
+	// HELPERS
+	// --------------------
 
 	private static boolean hasRole(UserEntity u, UserRole role) {
 		return u.getRoles().stream().anyMatch(r -> r.getRole() == role);

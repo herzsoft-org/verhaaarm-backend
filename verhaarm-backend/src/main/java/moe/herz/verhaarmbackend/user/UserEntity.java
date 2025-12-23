@@ -5,6 +5,7 @@ import java.time.OffsetDateTime;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Entity
 @Table(name = "users")
@@ -63,7 +64,6 @@ public class UserEntity {
 
 	@PreUpdate
 	void preUpdate() {
-		// DB trigger also handles this, but keeping a sane Java-side value helps logs/tests.
 		updatedAt = OffsetDateTime.now();
 		usernameNormalized = UsernameNormalizer.normalize(username);
 	}
@@ -76,6 +76,14 @@ public class UserEntity {
 
 	public void addRole(UserRole role) {
 		roles.add(new UserRoleEntity(this, role));
+	}
+
+	public boolean hasRole(UserRole role) {
+		return roles.stream().anyMatch(r -> r.getRole() == role);
+	}
+
+	public Set<UserRole> roleSet() {
+		return roles.stream().map(UserRoleEntity::getRole).collect(Collectors.toSet());
 	}
 
 	// --- Getters / setters
