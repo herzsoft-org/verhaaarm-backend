@@ -4,6 +4,8 @@ import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.fine.dto.CreateFineRequest;
 import moe.herz.verhaarmbackend.fine.dto.FineDto;
 import moe.herz.verhaarmbackend.fine.dto.UpdateFineRequest;
+import moe.herz.verhaarmbackend.finecatalog.FineCatalogItemEntity;
+import moe.herz.verhaarmbackend.finecatalog.FineCatalogRepository;
 import moe.herz.verhaarmbackend.period.ConventPeriodRepository;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserRole;
@@ -20,13 +22,15 @@ public class FineService {
 
 	private final FineRepository fines;
 	private final ConventPeriodRepository periods;
+	private final FineCatalogRepository catalog;
 
 	@PersistenceContext
 	private EntityManager em;
 
-	public FineService(FineRepository fines, ConventPeriodRepository periods) {
+	public FineService(FineRepository fines, ConventPeriodRepository periods, FineCatalogRepository catalog) {
 		this.fines = fines;
 		this.periods = periods;
+		this.catalog = catalog;
 	}
 
 	@Transactional(readOnly = true)
@@ -58,22 +62,51 @@ public class FineService {
 			throw ApiErrors.badRequest("At least one target user is required");
 		}
 
-		if (req.amountCents() < 0) throw ApiErrors.badRequest("Amount must be >= 0");
-
 		var period = periods.findById(req.periodId()).orElseThrow(() -> ApiErrors.badRequest("Period not found"));
 
 		if (period.isLocked() && !(hasRole(actor, UserRole.ADMIN) || hasRole(actor, UserRole.SENIOR))) {
 			throw ApiErrors.badRequest("Cannot create fines in locked period");
 		}
 
+		UUID catalogItemId = req.catalogItemId();
+
+		String reason;
+		int amountCents;
+		FineType type;
+
+		if (catalogItemId != null) {
+			// only allow active + not deleted catalog items
+			FineCatalogItemEntity item = catalog.findActiveVisibleById(catalogItemId)
+					.orElseThrow(() -> ApiErrors.badRequest("Catalog item not found or inactive"));
+
+			reason = (req.reason() == null || req.reason().trim().isBlank())
+					? item.getTitle()
+					: req.reason().trim();
+
+			Integer reqAmount = req.amountCents();
+			amountCents = (reqAmount == null) ? item.getDefaultAmountCents() : reqAmount;
+
+			type = FineType.CATALOG;
+		} else {
+			reason = (req.reason() == null) ? "" : req.reason().trim();
+			if (reason.isBlank()) throw ApiErrors.badRequest("Reason required");
+
+			if (req.amountCents() == null) throw ApiErrors.badRequest("Amount required");
+			amountCents = req.amountCents();
+
+			type = FineType.CUSTOM;
+		}
+
+		if (amountCents < 0) throw ApiErrors.badRequest("Amount must be >= 0");
+
 		var f = new FineEntity(
 				UUID.randomUUID(),
 				req.periodId(),
 				actor.getId(),
-				req.catalogItemId(),
-				req.reason().trim(),
-				req.amountCents(),
-				req.catalogItemId() != null ? FineType.CATALOG : FineType.CUSTOM
+				catalogItemId,
+				reason,
+				amountCents,
+				type
 		);
 
 		for (UUID uid : req.targetUserIds()) {
@@ -84,7 +117,7 @@ public class FineService {
 
 		// Ensure DB-generated columns (created_at) are available
 		em.flush();
-		em.clear(); // avoid returning the same managed instance with null createdAt
+		em.clear();
 
 		var reloaded = fines.findVisibleById(f.getId())
 				.orElseThrow(() -> ApiErrors.notFound("Fine not found"));
@@ -135,6 +168,10 @@ public class FineService {
 		}
 
 		if (req.catalogItemId() != null) {
+			// validate catalog item
+			catalog.findActiveVisibleById(req.catalogItemId())
+					.orElseThrow(() -> ApiErrors.badRequest("Catalog item not found or inactive"));
+
 			f.setCatalogItemId(req.catalogItemId());
 			f.setType(FineType.CATALOG);
 		}
