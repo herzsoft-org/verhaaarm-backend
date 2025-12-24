@@ -99,8 +99,4 @@ public class SecurityConfig {
 		return new ProviderManager(provider);
 	}
 
-	@Bean
-	public PasswordEncoder passwordEncoder() {
-		return new BCryptPasswordEncoder();
-	}
 }
