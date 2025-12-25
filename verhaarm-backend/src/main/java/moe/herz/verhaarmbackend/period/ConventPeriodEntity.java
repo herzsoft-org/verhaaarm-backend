@@ -13,7 +13,8 @@ public class ConventPeriodEntity {
 	@Column(nullable = false)
 	private UUID id;
 
-	@Column(nullable = false, unique = true)
+	// Multiple periods may share the same semester label (e.g., WS24/25)
+	@Column(nullable = false)
 	private String semester;
 
 	@Column(name = "start_at", nullable = false)

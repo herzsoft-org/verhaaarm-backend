@@ -10,8 +10,6 @@ import java.util.UUID;
 
 public interface ConventPeriodRepository extends JpaRepository<ConventPeriodEntity, UUID> {
 
-	boolean existsBySemester(String semester);
-
 	@Query("select p from ConventPeriodEntity p where p.active = true")
 	Optional<ConventPeriodEntity> findActive();
 

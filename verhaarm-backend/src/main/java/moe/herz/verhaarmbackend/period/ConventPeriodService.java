@@ -12,9 +12,12 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Service
 public class ConventPeriodService {
+
+	private static final Pattern SEMESTER_PATTERN = Pattern.compile("^(WS\\d{2}/\\d{2}|SS\\d{2})$");
 
 	private final ConventPeriodRepository periods;
 
@@ -41,13 +44,9 @@ public class ConventPeriodService {
 
 	@Transactional
 	public ConventPeriodDto create(CreateConventPeriodRequest req) {
-		String semester = normalizeSemester(req.semester());
+		String semester = normalizeAndValidateSemester(req.semester());
 
 		validateDates(req.startAt(), req.endAt());
-
-		if (periods.existsBySemester(semester)) {
-			throw ApiErrors.badRequest("Semester already exists");
-		}
 
 		var p = new ConventPeriodEntity(
 				UUID.randomUUID(),
@@ -67,10 +66,7 @@ public class ConventPeriodService {
 		var p = periods.findById(id).orElseThrow(() -> ApiErrors.notFound("Period not found"));
 
 		if (req.semester() != null && !req.semester().isBlank()) {
-			String semester = normalizeSemester(req.semester());
-			if (!semester.equals(p.getSemester()) && periods.existsBySemester(semester)) {
-				throw ApiErrors.badRequest("Semester already exists");
-			}
+			String semester = normalizeAndValidateSemester(req.semester());
 			p.setSemester(semester);
 		}
 
@@ -99,7 +95,8 @@ public class ConventPeriodService {
 		try {
 			periods.save(p);
 		} catch (DataIntegrityViolationException e) {
-			throw ApiErrors.badRequest("Constraint violation (semester unique or single active)");
+			// Covers: single-active partial unique index and other DB constraints
+			throw ApiErrors.badRequest("Constraint violation (single active period or invalid data)");
 		}
 
 		return toDto(p);
@@ -154,9 +151,18 @@ public class ConventPeriodService {
 		}
 	}
 
-	private static String normalizeSemester(String semester) {
-		if (semester == null) return "";
-		return semester.trim().toUpperCase(Locale.ROOT);
+	private static String normalizeAndValidateSemester(String semester) {
+		if (semester == null) {
+			throw ApiErrors.badRequest("semester is required");
+		}
+		String s = semester.trim().toUpperCase(Locale.ROOT);
+
+		// Enforce your intended format: WS24/25 or SS25
+		if (!SEMESTER_PATTERN.matcher(s).matches()) {
+			throw ApiErrors.badRequest("Invalid semester format. Use WS24/25 or SS25");
+		}
+
+		return s;
 	}
 
 	private ConventPeriodDto toDto(ConventPeriodEntity p) {
