@@ -22,12 +22,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
-import org.springframework.web.cors.CorsConfiguration;
-import org.springframework.web.cors.CorsConfigurationSource;
-import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
-
-import java.util.List;
-
 @Configuration
 @EnableMethodSecurity
 public class SecurityConfig {
@@ -35,16 +29,30 @@ public class SecurityConfig {
 	@Bean
 	public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtAuthFilter jwtAuthFilter) throws Exception {
 		http
+				// API uses Bearer tokens -> no CSRF needed (unless you later switch to cookie auth)
 				.csrf(csrf -> csrf.disable())
+
 				.cors(Customizer.withDefaults())
+
+				// IMPORTANT: stateless API (prevents accidental sessions)
+				.sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+
 				.authorizeHttpRequests(auth -> auth
 						.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 						.requestMatchers("/auth/**").permitAll()
-						.requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
-						.requestMatchers("/actuator/health").permitAll()
 						.requestMatchers("/error").permitAll()
+
+						// Swagger UI assets must load without JWT (protected by Nginx basic auth)
+						.requestMatchers("/swagger-ui.html", "/swagger-ui/**").permitAll()
+						.requestMatchers("/v3/api-docs/**").permitAll()
+
+						// lock down actuator (at least health; better to keep exposure minimal in app config)
+						.requestMatchers("/actuator/**").hasRole("ADMIN")
+
 						.anyRequest().authenticated()
 				)
+
+				// minimal, consistent JSON errors (no stack traces)
 				.exceptionHandling(eh -> eh
 						.authenticationEntryPoint((request, response, ex) -> {
 							response.setStatus(HttpStatus.UNAUTHORIZED.value());
@@ -57,6 +65,7 @@ public class SecurityConfig {
 							response.getWriter().write("{\"error\":\"Forbidden\"}");
 						})
 				)
+
 				.addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
 		return http.build();

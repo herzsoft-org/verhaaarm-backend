@@ -34,23 +34,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 	@Override
 	protected boolean shouldNotFilter(HttpServletRequest request) {
 		String path = request.getServletPath();
-
 		if (path == null) return false;
 
-		// allow unauthenticated endpoints
-		if (path.equals("/actuator/health")) return true;
-
-		if (path.equals("/swagger-ui.html")
-				|| path.startsWith("/swagger-ui/")
-				|| path.startsWith("/v3/api-docs/")) return true;
-
+		// allow unauthenticated auth endpoints
 		if (path.equals("/auth/login")
 				|| path.equals("/auth/refresh")
 				|| path.equals("/auth/logout")) return true;
 
+		// /error should be reachable without auth
+		if (path.equals("/error")) return true;
+
 		return false;
 	}
-
 
 	@Override
 	protected void doFilterInternal(
@@ -71,7 +66,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 		try {
 			claims = jwtService.parse(token);
 		} catch (Exception e) {
-			// invalid / expired token -> just continue unauthenticated
+			// invalid / expired token -> continue unauthenticated
 			filterChain.doFilter(request, response);
 			return;
 		}
@@ -103,6 +98,4 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
 		filterChain.doFilter(request, response);
 	}
-
-
 }

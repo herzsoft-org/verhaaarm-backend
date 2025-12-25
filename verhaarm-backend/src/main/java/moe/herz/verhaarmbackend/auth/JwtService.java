@@ -24,6 +24,14 @@ public class JwtService {
 			@Value("${verhaarm.security.jwt.issuer}") String issuer,
 			@Value("${verhaarm.security.jwt.accessTtlSeconds}") long accessTtlSeconds
 	) {
+		if (secret == null || secret.isBlank()) {
+			throw new IllegalStateException("JWT secret missing (set VERHAARM_JWT_SECRET)");
+		}
+		// JJWT HS256 expects a sufficiently long key; enforce a minimum.
+		if (secret.length() < 32) {
+			throw new IllegalStateException("JWT secret too short (min 32 chars)");
+		}
+
 		this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
 		this.issuer = issuer;
 		this.accessTtlSeconds = accessTtlSeconds;

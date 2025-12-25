@@ -1,5 +1,6 @@
 package moe.herz.verhaarmbackend.common;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -12,19 +13,22 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.security.access.AccessDeniedException;
 
-
 import java.util.Map;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+	private final boolean debugErrors;
+
+	public GlobalExceptionHandler(@Value("${verhaarm.debugErrors:false}") boolean debugErrors) {
+		this.debugErrors = debugErrors;
+	}
+
 	@ExceptionHandler(ResponseStatusException.class)
 	public ResponseEntity<?> handleResponseStatus(ResponseStatusException ex) {
 		return ResponseEntity
 				.status(ex.getStatusCode())
-				.body(Map.of(
-						"error", ex.getReason()
-				));
+				.body(Map.of("error", ex.getReason()));
 	}
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)
@@ -55,27 +59,26 @@ public class GlobalExceptionHandler {
 
 	@ExceptionHandler(DataIntegrityViolationException.class)
 	public ResponseEntity<?> handleDataIntegrity(DataIntegrityViolationException ex) {
-		String msg = ex.getMostSpecificCause() != null ? ex.getMostSpecificCause().getMessage() : ex.getMessage();
-		return ResponseEntity.status(409).body(Map.of(
-				"error", "Conflict",
-				"details", msg
-		));
+		if (debugErrors) {
+			String msg = ex.getMostSpecificCause() != null ? ex.getMostSpecificCause().getMessage() : ex.getMessage();
+			return ResponseEntity.status(409).body(Map.of("error", "Conflict", "details", msg));
+		}
+		return ResponseEntity.status(409).body(Map.of("error", "Conflict"));
 	}
 
 	@ExceptionHandler({AuthorizationDeniedException.class, AccessDeniedException.class})
 	public ResponseEntity<?> handleAccessDenied(Exception ex) {
-		return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
-				"error", "Forbidden"
-		));
+		return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Forbidden"));
 	}
 
-
-	// Pragmatic fallback so you actually see what blew up during dev
 	@ExceptionHandler(Exception.class)
 	public ResponseEntity<?> handleGeneric(Exception ex) {
-		return ResponseEntity.status(500).body(Map.of(
-				"error", "Internal Server Error",
-				"details", ex.getClass().getSimpleName() + ": " + ex.getMessage()
-		));
+		if (debugErrors) {
+			return ResponseEntity.status(500).body(Map.of(
+					"error", "Internal Server Error",
+					"details", ex.getClass().getSimpleName() + ": " + ex.getMessage()
+			));
+		}
+		return ResponseEntity.status(500).body(Map.of("error", "Internal Server Error"));
 	}
 }
