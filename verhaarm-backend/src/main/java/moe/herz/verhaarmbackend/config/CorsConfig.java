@@ -18,13 +18,11 @@ public class CorsConfig {
 		cfg.setAllowedOriginPatterns(List.of(
 				"http://localhost:*",
 				"http://127.0.0.1:*"
-				// später falls du Web hostest:
-				// ,"https://verhaarm.herz.moe"
+				// add your real web origin later if needed
 		));
-
-		cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-		cfg.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept"));
-		cfg.setExposedHeaders(List.of("Content-Disposition"));
+		cfg.setAllowedMethods(List.of("GET","POST","PUT","PATCH","DELETE","OPTIONS"));
+		cfg.setAllowedHeaders(List.of("*"));
+		cfg.setExposedHeaders(List.of("Authorization","Content-Disposition"));
 		cfg.setAllowCredentials(false);
 
 		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
@@ -32,3 +30,4 @@ public class CorsConfig {
 		return source;
 	}
 }
+
