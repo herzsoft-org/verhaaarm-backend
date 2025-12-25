@@ -2,13 +2,14 @@ package moe.herz.verhaarmbackend.fine.dto;
 
 import moe.herz.verhaarmbackend.fine.FineType;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Set;
 import java.util.UUID;
 
 public record FineDto(
 		UUID id,
-		UUID periodId,
+		LocalDate fineDate,
 		UUID creatorUserId,
 		UUID catalogItemId,
 		String reason,

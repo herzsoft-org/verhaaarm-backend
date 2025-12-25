@@ -2,6 +2,7 @@ package moe.herz.verhaarmbackend.fine;
 
 import jakarta.persistence.*;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.HashSet;
 import java.util.Set;
@@ -15,8 +16,8 @@ public class FineEntity {
 	@Column(nullable = false)
 	private UUID id;
 
-	@Column(name = "period_id", nullable = false)
-	private UUID periodId;
+	@Column(name = "fine_date", nullable = false)
+	private LocalDate fineDate;
 
 	@Column(name = "creator_user_id", nullable = false)
 	private UUID creatorUserId;
@@ -63,9 +64,17 @@ public class FineEntity {
 		// JPA
 	}
 
-	public FineEntity(UUID id, UUID periodId, UUID creatorUserId, UUID catalogItemId, String reason, int amountCents, FineType type) {
+	public FineEntity(
+			UUID id,
+			LocalDate fineDate,
+			UUID creatorUserId,
+			UUID catalogItemId,
+			String reason,
+			int amountCents,
+			FineType type
+	) {
 		this.id = id;
-		this.periodId = periodId;
+		this.fineDate = fineDate;
 		this.creatorUserId = creatorUserId;
 		this.catalogItemId = catalogItemId;
 		this.reason = reason;
@@ -74,7 +83,7 @@ public class FineEntity {
 	}
 
 	public UUID getId() { return id; }
-	public UUID getPeriodId() { return periodId; }
+	public LocalDate getFineDate() { return fineDate; }
 	public UUID getCreatorUserId() { return creatorUserId; }
 	public UUID getCatalogItemId() { return catalogItemId; }
 	public String getReason() { return reason; }
@@ -87,7 +96,7 @@ public class FineEntity {
 	public OffsetDateTime getUpdatedAt() { return updatedAt; }
 	public Set<UUID> getTargetUserIds() { return targetUserIds; }
 
-	public void setPeriodId(UUID periodId) { this.periodId = periodId; }
+	public void setFineDate(LocalDate fineDate) { this.fineDate = fineDate; }
 	public void setCatalogItemId(UUID catalogItemId) { this.catalogItemId = catalogItemId; }
 	public void setReason(String reason) { this.reason = reason; }
 	public void setAmountCents(int amountCents) { this.amountCents = amountCents; }

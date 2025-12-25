@@ -7,7 +7,6 @@ import moe.herz.verhaarmbackend.fine.dto.FineDto;
 import moe.herz.verhaarmbackend.fine.dto.UpdateFineRequest;
 import moe.herz.verhaarmbackend.finecatalog.FineCatalogItemEntity;
 import moe.herz.verhaarmbackend.finecatalog.FineCatalogRepository;
-import moe.herz.verhaarmbackend.period.ConventPeriodRepository;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserRole;
 import org.springframework.stereotype.Service;
@@ -15,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.*;
 
@@ -22,16 +22,14 @@ import java.util.*;
 public class FineService {
 
 	private final FineRepository fines;
-	private final ConventPeriodRepository periods;
 	private final FineCatalogRepository catalog;
 	private final AuditLogService audit;
 
 	@PersistenceContext
 	private EntityManager em;
 
-	public FineService(FineRepository fines, ConventPeriodRepository periods, FineCatalogRepository catalog, AuditLogService audit) {
+	public FineService(FineRepository fines, FineCatalogRepository catalog, AuditLogService audit) {
 		this.fines = fines;
-		this.periods = periods;
 		this.catalog = catalog;
 		this.audit = audit;
 	}
@@ -65,11 +63,8 @@ public class FineService {
 			throw ApiErrors.badRequest("At least one target user is required");
 		}
 
-		var period = periods.findById(req.periodId()).orElseThrow(() -> ApiErrors.badRequest("Period not found"));
-
-		if (period.isLocked() && !(hasRole(actor, UserRole.ADMIN) || hasRole(actor, UserRole.SENIOR))) {
-			throw ApiErrors.badRequest("Cannot create fines in locked period");
-		}
+		LocalDate fineDate = req.fineDate();
+		if (fineDate == null) throw ApiErrors.badRequest("fineDate required");
 
 		UUID catalogItemId = req.catalogItemId();
 
@@ -103,7 +98,7 @@ public class FineService {
 
 		var f = new FineEntity(
 				UUID.randomUUID(),
-				req.periodId(),
+				fineDate,
 				actor.getId(),
 				catalogItemId,
 				reason,
@@ -126,7 +121,7 @@ public class FineService {
 		// AUDIT: fine created
 		var d = audit.obj();
 		audit.put(d, "fineId", reloaded.getId());
-		audit.put(d, "periodId", reloaded.getPeriodId());
+		audit.put(d, "fineDate", reloaded.getFineDate() == null ? null : reloaded.getFineDate().toString());
 		audit.put(d, "creatorUserId", reloaded.getCreatorUserId());
 		audit.put(d, "catalogItemId", reloaded.getCatalogItemId());
 		audit.put(d, "reason", reloaded.getReason());
@@ -150,11 +145,6 @@ public class FineService {
 			throw ApiErrors.forbidden("Forbidden");
 		}
 
-		var currentPeriod = periods.findById(f.getPeriodId()).orElseThrow(() -> ApiErrors.badRequest("Period not found"));
-		if (currentPeriod.isLocked() && !(isAdmin || isSenior)) {
-			throw ApiErrors.forbidden("Cannot edit fines in locked period");
-		}
-
 		if (!isAdmin && !isSenior) {
 			if (!f.getCreatorUserId().equals(actor.getId())) {
 				throw ApiErrors.forbidden("HOUSEKEEPING can only edit own fines");
@@ -162,20 +152,15 @@ public class FineService {
 		}
 
 		// snapshot before
-		UUID beforePeriodId = f.getPeriodId();
+		LocalDate beforeFineDate = f.getFineDate();
 		String beforeReason = f.getReason();
 		Integer beforeAmount = f.getAmountCents();
 		UUID beforeCatalogItemId = f.getCatalogItemId();
 		FineType beforeType = f.getType();
 		Set<UUID> beforeTargets = Set.copyOf(f.getTargetUserIds());
 
-		UUID newPeriodId = req.periodId() != null ? req.periodId() : f.getPeriodId();
-		if (!newPeriodId.equals(f.getPeriodId())) {
-			var newPeriod = periods.findById(newPeriodId).orElseThrow(() -> ApiErrors.badRequest("Period not found"));
-			if (newPeriod.isLocked() && !(isAdmin || isSenior)) {
-				throw ApiErrors.forbidden("Cannot move fine into locked period");
-			}
-			f.setPeriodId(newPeriodId);
+		if (req.fineDate() != null) {
+			f.setFineDate(req.fineDate());
 		}
 
 		if (req.reason() != null) {
@@ -216,7 +201,7 @@ public class FineService {
 		audit.put(d, "fineId", reloaded.getId());
 
 		var before = audit.obj();
-		audit.put(before, "periodId", beforePeriodId);
+		audit.put(before, "fineDate", beforeFineDate == null ? null : beforeFineDate.toString());
 		audit.put(before, "reason", beforeReason);
 		audit.put(before, "amountCents", beforeAmount);
 		audit.put(before, "catalogItemId", beforeCatalogItemId);
@@ -224,7 +209,7 @@ public class FineService {
 		audit.putUuidArray(before, "targetUserIds", beforeTargets);
 
 		var after = audit.obj();
-		audit.put(after, "periodId", reloaded.getPeriodId());
+		audit.put(after, "fineDate", reloaded.getFineDate() == null ? null : reloaded.getFineDate().toString());
 		audit.put(after, "reason", reloaded.getReason());
 		audit.put(after, "amountCents", reloaded.getAmountCents());
 		audit.put(after, "catalogItemId", reloaded.getCatalogItemId());
@@ -251,11 +236,6 @@ public class FineService {
 			throw ApiErrors.forbidden("Forbidden");
 		}
 
-		var period = periods.findById(f.getPeriodId()).orElseThrow(() -> ApiErrors.badRequest("Period not found"));
-		if (period.isLocked() && !(isAdmin || isSenior)) {
-			throw ApiErrors.forbidden("Cannot delete fines in locked period");
-		}
-
 		if (!isAdmin && !isSenior) {
 			if (!f.getCreatorUserId().equals(actor.getId())) {
 				throw ApiErrors.forbidden("HOUSEKEEPING can only delete own fines");
@@ -268,7 +248,7 @@ public class FineService {
 		// AUDIT: fine deleted (soft delete)
 		var d = audit.obj();
 		audit.put(d, "fineId", f.getId());
-		audit.put(d, "periodId", f.getPeriodId());
+		audit.put(d, "fineDate", f.getFineDate() == null ? null : f.getFineDate().toString());
 		audit.put(d, "deletedAt", f.getDeletedAt() == null ? null : f.getDeletedAt().toString());
 		audit.log(actor, "fine.delete", d);
 	}
@@ -286,7 +266,7 @@ public class FineService {
 	private FineDto toDto(FineEntity f) {
 		return new FineDto(
 				f.getId(),
-				f.getPeriodId(),
+				f.getFineDate(),
 				f.getCreatorUserId(),
 				f.getCatalogItemId(),
 				f.getReason(),

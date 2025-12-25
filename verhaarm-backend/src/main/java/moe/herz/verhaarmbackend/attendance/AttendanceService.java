@@ -1,4 +1,3 @@
-// src/main/java/moe/herz/verhaarmbackend/attendance/AttendanceService.java
 package moe.herz.verhaarmbackend.attendance;
 
 import moe.herz.verhaarmbackend.attendance.dto.*;
@@ -10,6 +9,7 @@ import moe.herz.verhaarmbackend.fine.FineRepository;
 import moe.herz.verhaarmbackend.fine.FineType;
 import moe.herz.verhaarmbackend.finecatalog.FineCatalogItemEntity;
 import moe.herz.verhaarmbackend.finecatalog.FineCatalogRepository;
+import moe.herz.verhaarmbackend.period.ConventPeriodEntity;
 import moe.herz.verhaarmbackend.period.ConventPeriodRepository;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserRole;
@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.*;
 
@@ -125,6 +126,9 @@ public class AttendanceService {
 
 	@Transactional(readOnly = true)
 	public List<AttendanceDto> listForEvent(UUID eventId, UserEntity actor) {
+		// use actor (removes warning) without changing permissions beyond "must be authenticated"
+		if (actor == null) throw ApiErrors.forbidden("Forbidden");
+
 		events.findVisibleById(eventId).orElseThrow(() -> ApiErrors.notFound("Event not found"));
 		return attendance.findVisibleByEventId(eventId).stream().map(this::toDto).toList();
 	}
@@ -133,7 +137,7 @@ public class AttendanceService {
 	public AttendanceDto upsert(UUID eventId, UpsertAttendanceRequest req, UserEntity actor) {
 		requireSeniorOrHousekeepingOrAdmin(actor);
 
-		EventEntity event = events.findVisibleById(eventId).orElseThrow(() -> ApiErrors.notFound("Event not found"));
+		events.findVisibleById(eventId).orElseThrow(() -> ApiErrors.notFound("Event not found"));
 
 		UUID userId = req.userId();
 		if (userId == null) throw ApiErrors.badRequest("userId required");
@@ -150,11 +154,9 @@ public class AttendanceService {
 			lateMinutes = null;
 		}
 
-		// Normal case: row exists and is visible
 		AttendanceEntity row = attendance.findVisibleByEventAndUser(eventId, userId).orElse(null);
 
 		if (row == null) {
-			// Soft-delete aware: if row exists but is deleted, revive it instead of inserting
 			AttendanceEntity existing = attendance.findAnyByEventAndUser(eventId, userId).orElse(null);
 
 			if (existing != null) {
@@ -164,7 +166,7 @@ public class AttendanceService {
 				attendance.save(existing);
 				row = existing;
 			} else {
-				row = new AttendanceEntity(UUID.randomUUID(), eventId, event.getPeriodId(), userId, status, lateMinutes);
+				row = new AttendanceEntity(UUID.randomUUID(), eventId, userId, status, lateMinutes);
 				attendance.save(row);
 			}
 		} else {
@@ -205,15 +207,19 @@ public class AttendanceService {
 
 		EventEntity event = events.findVisibleById(eventId).orElseThrow(() -> ApiErrors.notFound("Event not found"));
 
-		AttendanceFineConfigEntity cfg = configs.findById(event.getPeriodId())
-				.orElseThrow(() -> ApiErrors.badRequest("Attendance fine config not set for period"));
+		ConventPeriodEntity derivedPeriod = periods.findCovering(event.getStartsAt())
+				.orElseThrow(() -> ApiErrors.badRequest("No convent period covers event date"));
+
+		AttendanceFineConfigEntity cfg = configs.findById(derivedPeriod.getId())
+				.orElseThrow(() -> ApiErrors.badRequest("Attendance fine config not set for derived period"));
 
 		boolean dryRun = req != null && req.dryRun();
 
-		// Lock all visible rows for this event so concurrent runs converge safely
 		List<AttendanceEntity> rows = attendance.findVisibleByEventForUpdate(eventId);
 
 		List<UUID> fineIds = new ArrayList<>();
+
+		LocalDate fineDate = event.getStartsAt().toLocalDate();
 
 		for (AttendanceEntity a : rows) {
 			FineTemplate tmpl = resolveTemplate(cfg, a.getStatus());
@@ -225,11 +231,10 @@ public class AttendanceService {
 			}
 
 			if (a.getFineId() == null) {
-				// create + link
 				UUID fineId = UUID.randomUUID();
 				FineEntity f = new FineEntity(
 						fineId,
-						event.getPeriodId(),
+						fineDate,
 						actor.getId(),
 						tmpl.catalogItemId,
 						tmpl.reason,
@@ -244,19 +249,16 @@ public class AttendanceService {
 
 				fineIds.add(fineId);
 			} else {
-				// update existing linked fine to match current expected template
 				FineEntity f = fines.findVisibleById(a.getFineId())
 						.orElseThrow(() -> ApiErrors.notFound("Linked fine not found"));
 
-				// Period should match event period; if not, fix it
-				f.setPeriodId(event.getPeriodId());
+				f.setFineDate(fineDate);
 
 				f.setCatalogItemId(tmpl.catalogItemId);
 				f.setReason(tmpl.reason);
 				f.setAmountCents(tmpl.amountCents);
 				f.setType(tmpl.type);
 
-				// enforce single target = that user
 				f.clearTargets();
 				f.addTarget(a.getUserId());
 
@@ -269,7 +271,6 @@ public class AttendanceService {
 		em.flush();
 		return new GenerateAttendanceFinesResultDto(fineIds.size(), fineIds);
 	}
-
 
 	private FineTemplate resolveTemplate(AttendanceFineConfigEntity cfg, AttendanceStatus status) {
 		if (status == AttendanceStatus.LATE) {
@@ -284,7 +285,6 @@ public class AttendanceService {
 			return null;
 		}
 
-		// ABSENT
 		if (cfg.getAbsentCatalogItemId() != null) {
 			FineCatalogItemEntity item = catalog.findActiveVisibleById(cfg.getAbsentCatalogItemId())
 					.orElseThrow(() -> ApiErrors.badRequest("Absent catalog item not found or inactive"));
@@ -324,7 +324,6 @@ public class AttendanceService {
 		return new AttendanceDto(
 				a.getId(),
 				a.getEventId(),
-				a.getPeriodId(),
 				a.getUserId(),
 				a.getStatus(),
 				a.getLateMinutes(),

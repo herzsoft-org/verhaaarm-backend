@@ -13,9 +13,6 @@ public class EventEntity {
 	@Column(nullable = false)
 	private UUID id;
 
-	@Column(name = "period_id", nullable = false)
-	private UUID periodId;
-
 	@Column(name = "creator_user_id", nullable = false)
 	private UUID creatorUserId;
 
@@ -47,7 +44,6 @@ public class EventEntity {
 
 	public EventEntity(
 			UUID id,
-			UUID periodId,
 			UUID creatorUserId,
 			String title,
 			OffsetDateTime startsAt,
@@ -55,7 +51,6 @@ public class EventEntity {
 			EventOwnerType ownerType
 	) {
 		this.id = id;
-		this.periodId = periodId;
 		this.creatorUserId = creatorUserId;
 		this.title = title;
 		this.startsAt = startsAt;
@@ -64,7 +59,6 @@ public class EventEntity {
 	}
 
 	public UUID getId() { return id; }
-	public UUID getPeriodId() { return periodId; }
 	public UUID getCreatorUserId() { return creatorUserId; }
 	public String getTitle() { return title; }
 	public OffsetDateTime getStartsAt() { return startsAt; }
@@ -74,7 +68,6 @@ public class EventEntity {
 	public OffsetDateTime getCreatedAt() { return createdAt; }
 	public OffsetDateTime getUpdatedAt() { return updatedAt; }
 
-	public void setPeriodId(UUID periodId) { this.periodId = periodId; }
 	public void setTitle(String title) { this.title = title; }
 	public void setStartsAt(OffsetDateTime startsAt) { this.startsAt = startsAt; }
 	public void setMandatory(boolean mandatory) { this.mandatory = mandatory; }

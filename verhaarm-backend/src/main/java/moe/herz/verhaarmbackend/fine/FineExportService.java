@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -38,9 +39,12 @@ public class FineExportService {
 
 		ConventPeriodEntity period = resolvePeriod(periodIdOrNull);
 
+		LocalDate fromDate = period.getStartAt().toLocalDate();
+		LocalDate toDate = period.getEndAt().toLocalDate();
+
 		List<FineEntity> rows = includeDeleted
-				? fines.findAllIncludingDeletedByPeriodWithTargets(period.getId())
-				: fines.findVisibleByPeriodWithTargets(period.getId());
+				? fines.findAllIncludingDeletedInDateRangeWithTargets(fromDate, toDate)
+				: fines.findVisibleInDateRangeWithTargets(fromDate, toDate);
 
 		// collect all user ids referenced by export (creator + targets)
 		Set<UUID> userIds = new HashSet<>();
@@ -58,7 +62,7 @@ public class FineExportService {
 		sb.append('\uFEFF');
 
 		// Header
-		sb.append("semester;periodId;fineId;createdAt;deletedAt;creatorUsername;creatorDisplayName;type;amount;reason;targetUsernames;targetDisplayNames;suggesterUserId;acceptedFromSuggestionId")
+		sb.append("semester;periodId;fineId;fineDate;createdAt;deletedAt;creatorUsername;creatorDisplayName;type;amount;reason;targetUsernames;targetDisplayNames;suggesterUserId;acceptedFromSuggestionId")
 				.append("\r\n");
 
 		for (FineEntity f : rows) {
@@ -76,6 +80,7 @@ public class FineExportService {
 			sb.append(esc(period.getSemester())).append(';');
 			sb.append(period.getId()).append(';');
 			sb.append(f.getId()).append(';');
+			sb.append(f.getFineDate() == null ? "" : f.getFineDate().toString()).append(';');
 			sb.append(f.getCreatedAt() == null ? "" : TS.format(f.getCreatedAt())).append(';');
 			sb.append(f.getDeletedAt() == null ? "" : TS.format(f.getDeletedAt())).append(';');
 

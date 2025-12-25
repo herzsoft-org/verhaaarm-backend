@@ -5,7 +5,6 @@ import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.event.dto.CreateEventRequest;
 import moe.herz.verhaarmbackend.event.dto.EventDto;
 import moe.herz.verhaarmbackend.event.dto.UpdateEventRequest;
-import moe.herz.verhaarmbackend.period.ConventPeriodRepository;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserRole;
 import org.springframework.stereotype.Service;
@@ -21,15 +20,13 @@ import java.util.UUID;
 public class EventService {
 
 	private final EventRepository events;
-	private final ConventPeriodRepository periods;
 	private final AuditLogService audit;
 
 	@PersistenceContext
 	private EntityManager em;
 
-	public EventService(EventRepository events, ConventPeriodRepository periods, AuditLogService audit) {
+	public EventService(EventRepository events, AuditLogService audit) {
 		this.events = events;
-		this.periods = periods;
 		this.audit = audit;
 	}
 
@@ -50,8 +47,6 @@ public class EventService {
 			throw ApiErrors.forbidden("Forbidden");
 		}
 
-		periods.findById(req.periodId()).orElseThrow(() -> ApiErrors.badRequest("Period not found"));
-
 		String title = req.title() == null ? "" : req.title().trim();
 		if (title.isBlank()) throw ApiErrors.badRequest("Title required");
 
@@ -67,7 +62,6 @@ public class EventService {
 
 		var e = new EventEntity(
 				UUID.randomUUID(),
-				req.periodId(),
 				actor.getId(),
 				title,
 				startsAt,
@@ -86,7 +80,6 @@ public class EventService {
 		// AUDIT: event created
 		var d = audit.obj();
 		audit.put(d, "eventId", reloaded.getId());
-		audit.put(d, "periodId", reloaded.getPeriodId());
 		audit.put(d, "creatorUserId", reloaded.getCreatorUserId());
 		audit.put(d, "title", reloaded.getTitle());
 		audit.put(d, "startsAt", reloaded.getStartsAt() == null ? null : reloaded.getStartsAt().toString());
@@ -117,15 +110,9 @@ public class EventService {
 		}
 
 		// snapshot before
-		UUID beforePeriodId = e.getPeriodId();
 		String beforeTitle = e.getTitle();
 		OffsetDateTime beforeStartsAt = e.getStartsAt();
 		boolean beforeMandatory = e.isMandatory();
-
-		if (req.periodId() != null && !req.periodId().equals(e.getPeriodId())) {
-			periods.findById(req.periodId()).orElseThrow(() -> ApiErrors.badRequest("Period not found"));
-			e.setPeriodId(req.periodId());
-		}
 
 		if (req.title() != null) {
 			String title = req.title().trim();
@@ -149,13 +136,11 @@ public class EventService {
 		audit.put(d, "eventId", e.getId());
 
 		var before = audit.obj();
-		audit.put(before, "periodId", beforePeriodId);
 		audit.put(before, "title", beforeTitle);
 		audit.put(before, "startsAt", beforeStartsAt == null ? null : beforeStartsAt.toString());
 		audit.put(before, "mandatory", beforeMandatory);
 
 		var after = audit.obj();
-		audit.put(after, "periodId", e.getPeriodId());
 		audit.put(after, "title", e.getTitle());
 		audit.put(after, "startsAt", e.getStartsAt() == null ? null : e.getStartsAt().toString());
 		audit.put(after, "mandatory", e.isMandatory());
@@ -204,7 +189,6 @@ public class EventService {
 	private EventDto toDto(EventEntity e) {
 		return new EventDto(
 				e.getId(),
-				e.getPeriodId(),
 				e.getCreatorUserId(),
 				e.getTitle(),
 				e.getStartsAt(),

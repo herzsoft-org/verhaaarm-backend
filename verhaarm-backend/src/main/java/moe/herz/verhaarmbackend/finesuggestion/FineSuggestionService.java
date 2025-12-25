@@ -11,12 +11,12 @@ import moe.herz.verhaarmbackend.finesuggestion.dto.CreateFineSuggestionRequest;
 import moe.herz.verhaarmbackend.finesuggestion.dto.FineSuggestionDto;
 import moe.herz.verhaarmbackend.finecatalog.FineCatalogItemEntity;
 import moe.herz.verhaarmbackend.finecatalog.FineCatalogRepository;
-import moe.herz.verhaarmbackend.period.ConventPeriodRepository;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserRole;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -26,7 +26,6 @@ public class FineSuggestionService {
 
 	private final FineSuggestionRepository suggestions;
 	private final FineRepository fines;
-	private final ConventPeriodRepository periods;
 	private final FineCatalogRepository catalog;
 	private final AuditLogService audit;
 
@@ -36,13 +35,11 @@ public class FineSuggestionService {
 	public FineSuggestionService(
 			FineSuggestionRepository suggestions,
 			FineRepository fines,
-			ConventPeriodRepository periods,
 			FineCatalogRepository catalog,
 			AuditLogService audit
 	) {
 		this.suggestions = suggestions;
 		this.fines = fines;
-		this.periods = periods;
 		this.catalog = catalog;
 		this.audit = audit;
 	}
@@ -56,12 +53,10 @@ public class FineSuggestionService {
 		List<FineSuggestionEntity> list;
 
 		if (mineOnly || !staff) {
-			// MEMBER (or anyone requesting mineOnly) => only own suggestions
 			list = (statusOrNull == null)
 					? suggestions.findVisibleByCreator(actor.getId())
 					: suggestions.findVisibleByCreatorAndStatus(actor.getId(), statusOrNull);
 		} else {
-			// staff default => all
 			list = (statusOrNull == null)
 					? suggestions.findAllVisible()
 					: suggestions.findVisibleByStatus(statusOrNull);
@@ -69,13 +64,6 @@ public class FineSuggestionService {
 
 		return list.stream().map(this::toDto).toList();
 	}
-
-	@Transactional(readOnly = true)
-	public List<FineSuggestionDto> listForActor(UserEntity actor, FineSuggestionStatus statusOrNull) {
-		return listForActor(actor, statusOrNull, false);
-	}
-
-
 
 	@Transactional(readOnly = true)
 	public FineSuggestionDto getForActor(UUID id, UserEntity actor) {
@@ -92,12 +80,14 @@ public class FineSuggestionService {
 
 	@Transactional
 	public FineSuggestionDto create(CreateFineSuggestionRequest req, UserEntity actor) {
+		if (actor == null) throw ApiErrors.forbidden("Forbidden");
+
 		if (req.targetUserIds() == null || req.targetUserIds().isEmpty()) {
 			throw ApiErrors.badRequest("At least one target user is required");
 		}
 
-		var period = periods.findById(req.periodId())
-				.orElseThrow(() -> ApiErrors.badRequest("Period not found"));
+		LocalDate fineDate = req.fineDate();
+		if (fineDate == null) throw ApiErrors.badRequest("fineDate required");
 
 		UUID catalogItemId = req.catalogItemId();
 
@@ -131,7 +121,7 @@ public class FineSuggestionService {
 
 		FineSuggestionEntity s = new FineSuggestionEntity(
 				UUID.randomUUID(),
-				period.getId(),
+				fineDate,
 				actor.getId(),
 				catalogItemId,
 				reason,
@@ -165,19 +155,9 @@ public class FineSuggestionService {
 			throw ApiErrors.badRequest("Suggestion is not pending");
 		}
 
-		var period = periods.findById(s.getPeriodId())
-				.orElseThrow(() -> ApiErrors.badRequest("Period not found"));
-
-		boolean isAdmin = hasRole(actor, UserRole.ADMIN);
-		boolean isSenior = hasRole(actor, UserRole.SENIOR);
-
-		if (period.isLocked() && !(isAdmin || isSenior)) {
-			throw ApiErrors.forbidden("Cannot accept suggestions into locked period");
-		}
-
 		FineEntity f = new FineEntity(
 				UUID.randomUUID(),
-				s.getPeriodId(),
+				s.getFineDate(),
 				actor.getId(),
 				s.getCatalogItemId(),
 				s.getReason(),
@@ -203,7 +183,7 @@ public class FineSuggestionService {
 		// AUDIT: suggestion accepted
 		var d = audit.obj();
 		audit.put(d, "suggestionId", s.getId());
-		audit.put(d, "periodId", s.getPeriodId());
+		audit.put(d, "fineDate", s.getFineDate() == null ? null : s.getFineDate().toString());
 		audit.put(d, "fineId", f.getId());
 		audit.put(d, "suggesterUserId", s.getCreatorUserId());
 		audit.put(d, "catalogItemId", s.getCatalogItemId());
@@ -234,7 +214,7 @@ public class FineSuggestionService {
 		// AUDIT: suggestion rejected
 		var d = audit.obj();
 		audit.put(d, "suggestionId", s.getId());
-		audit.put(d, "periodId", s.getPeriodId());
+		audit.put(d, "fineDate", s.getFineDate() == null ? null : s.getFineDate().toString());
 		audit.put(d, "suggesterUserId", s.getCreatorUserId());
 		audit.log(actor, "fineSuggestion.reject", d);
 	}
@@ -248,7 +228,7 @@ public class FineSuggestionService {
 	private FineSuggestionDto toDto(FineSuggestionEntity s) {
 		return new FineSuggestionDto(
 				s.getId(),
-				s.getPeriodId(),
+				s.getFineDate(),
 				s.getCreatorUserId(),
 				s.getCatalogItemId(),
 				s.getReason(),

@@ -8,7 +8,6 @@ import java.util.UUID;
 public record AttendanceDto(
 		UUID id,
 		UUID eventId,
-		UUID periodId,
 		UUID userId,
 		AttendanceStatus status,
 		Integer lateMinutes,

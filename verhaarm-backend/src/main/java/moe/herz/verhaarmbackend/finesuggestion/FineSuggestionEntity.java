@@ -3,6 +3,7 @@ package moe.herz.verhaarmbackend.finesuggestion;
 import jakarta.persistence.*;
 import moe.herz.verhaarmbackend.fine.FineType;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.HashSet;
 import java.util.Set;
@@ -16,8 +17,8 @@ public class FineSuggestionEntity {
 	@Column(nullable = false)
 	private UUID id;
 
-	@Column(name = "period_id", nullable = false)
-	private UUID periodId;
+	@Column(name = "fine_date", nullable = false)
+	private LocalDate fineDate;
 
 	@Column(name = "creator_user_id", nullable = false)
 	private UUID creatorUserId;
@@ -71,7 +72,7 @@ public class FineSuggestionEntity {
 
 	public FineSuggestionEntity(
 			UUID id,
-			UUID periodId,
+			LocalDate fineDate,
 			UUID creatorUserId,
 			UUID catalogItemId,
 			String reason,
@@ -79,7 +80,7 @@ public class FineSuggestionEntity {
 			FineType type
 	) {
 		this.id = id;
-		this.periodId = periodId;
+		this.fineDate = fineDate;
 		this.creatorUserId = creatorUserId;
 		this.catalogItemId = catalogItemId;
 		this.reason = reason;
@@ -89,7 +90,7 @@ public class FineSuggestionEntity {
 	}
 
 	public UUID getId() { return id; }
-	public UUID getPeriodId() { return periodId; }
+	public LocalDate getFineDate() { return fineDate; }
 	public UUID getCreatorUserId() { return creatorUserId; }
 	public UUID getCatalogItemId() { return catalogItemId; }
 	public String getReason() { return reason; }
@@ -106,6 +107,7 @@ public class FineSuggestionEntity {
 
 	public boolean isDeleted() { return deletedAt != null; }
 
+	public void setFineDate(LocalDate fineDate) { this.fineDate = fineDate; }
 	public void setDeletedAt(OffsetDateTime deletedAt) { this.deletedAt = deletedAt; }
 
 	public void clearTargets() { this.targetUserIds.clear(); }

@@ -16,9 +16,6 @@ public class AttendanceEntity {
 	@Column(name = "event_id", nullable = false)
 	private UUID eventId;
 
-	@Column(name = "period_id", nullable = false)
-	private UUID periodId;
-
 	@Column(name = "user_id", nullable = false)
 	private UUID userId;
 
@@ -45,10 +42,9 @@ public class AttendanceEntity {
 		// JPA
 	}
 
-	public AttendanceEntity(UUID id, UUID eventId, UUID periodId, UUID userId, AttendanceStatus status, Integer lateMinutes) {
+	public AttendanceEntity(UUID id, UUID eventId, UUID userId, AttendanceStatus status, Integer lateMinutes) {
 		this.id = id;
 		this.eventId = eventId;
-		this.periodId = periodId;
 		this.userId = userId;
 		this.status = status;
 		this.lateMinutes = lateMinutes;
@@ -56,7 +52,6 @@ public class AttendanceEntity {
 
 	public UUID getId() { return id; }
 	public UUID getEventId() { return eventId; }
-	public UUID getPeriodId() { return periodId; }
 	public UUID getUserId() { return userId; }
 	public AttendanceStatus getStatus() { return status; }
 	public Integer getLateMinutes() { return lateMinutes; }

@@ -7,7 +7,6 @@ import java.util.UUID;
 
 public record EventDto(
 		UUID id,
-		UUID periodId,
 		UUID creatorUserId,
 		String title,
 		OffsetDateTime startsAt,
