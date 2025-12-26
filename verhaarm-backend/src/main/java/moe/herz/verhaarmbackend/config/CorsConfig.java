@@ -15,23 +15,28 @@ public class CorsConfig {
 	public CorsConfigurationSource corsConfigurationSource() {
 		CorsConfiguration cfg = new CorsConfiguration();
 
-		// Local dev Flutter web origins
 		cfg.setAllowedOriginPatterns(List.of(
+				"https://verhaarm.herz.moe",
 				"http://localhost:*",
 				"http://127.0.0.1:*"
-				// add your real web origin here when you have it, e.g.:
-				// "https://verhaarm.herz.moe"
 		));
 
 		cfg.setAllowedMethods(List.of("GET","POST","PUT","PATCH","DELETE","OPTIONS"));
 
-		// keep explicit, not "*"
-		cfg.setAllowedHeaders(List.of("Authorization", "Content-Type"));
-		cfg.setExposedHeaders(List.of("Authorization","Content-Disposition"));
+		cfg.setAllowedHeaders(List.of(
+				"Authorization",
+				"Content-Type",
+				"Accept",
+				"Origin"
+		));
 
-		// If you use cookies on web (HttpOnly refresh cookie), this must be true.
-		// If you only use Bearer tokens, set this to false.
-		cfg.setAllowCredentials(true);
+		cfg.setExposedHeaders(List.of(
+				"Authorization",
+				"Content-Disposition"
+		));
+
+		// IMPORTANT: only true if you actually use cookies (session/refresh cookie)
+		cfg.setAllowCredentials(false);
 
 		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
 		source.registerCorsConfiguration("/**", cfg);
