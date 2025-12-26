@@ -31,106 +31,82 @@ jobs:
 
       - name: Pick JAR artifact (avoid .original)
         id: jar
-        working-directory: verhaarm-backend
         run: |
           set -euo pipefail
-          echo "== List target directory =="
-          ls -lah target || true
+          echo "== Target dir listing =="
+          ls -lah verhaarm-backend/target || true
 
-          # Pick the newest jar that is not *.original and not *-sources/-javadoc
-          JAR="$(ls -1t target/*.jar \
+          JAR_REL="$(ls -1t verhaarm-backend/target/*.jar \
             | grep -vE '\.original\.jar$|-(sources|javadoc)\.jar$' \
             | head -n1)"
 
-          if [ -z "${JAR:-}" ]; then
-            echo "ERROR: No deployable JAR found in target/"
+          if [ -z "${JAR_REL:-}" ]; then
+            echo "ERROR: No deployable JAR found."
             exit 1
           fi
 
-          echo "Selected JAR: $JAR"
-          ls -lah "$JAR"
-          echo "jar_path=$JAR" >> "$GITHUB_OUTPUT"
+          JAR_ABS="${GITHUB_WORKSPACE}/${JAR_REL}"
+          echo "Selected JAR (rel): $JAR_REL"
+          echo "Selected JAR (abs): $JAR_ABS"
+          ls -lah "$JAR_ABS"
+
+          echo "jar_abs=$JAR_ABS" >> "$GITHUB_OUTPUT"
 
       - name: Prepare SSH (base64 secret)
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-
-          # VPS_SSH_KEY_B64 must be base64 of the *entire* private key file bytes
           printf '%s' "${{ secrets.VPS_SSH_KEY_B64 }}" | base64 -d > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-
-          echo "== key parse check =="
           ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
-
-          echo "== known_hosts =="
           ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Upload JAR to VPS (/tmp/verhaarm.jar) + verify
         run: |
           set -euo pipefail
-          LOCAL_JAR="${{ steps.jar.outputs.jar_path }}"
+          LOCAL_JAR="${{ steps.jar.outputs.jar_abs }}"
           echo "Uploading: $LOCAL_JAR"
+          test -f "$LOCAL_JAR"
 
-          # Upload with explicit remote filename
           scp -v \
             -i ~/.ssh/id_ed25519 \
             -o StrictHostKeyChecking=yes \
             "$LOCAL_JAR" \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/verhaarm.jar"
 
-          echo "== Verify on VPS immediately after upload =="
           ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
             'set -euo pipefail
-             echo "Remote user: $(whoami)"
-             echo "Host: $(hostname)"
+             echo "Remote user: $(whoami)"; echo "Host: $(hostname)"
              ls -lah /tmp/verhaarm.jar
              sha256sum /tmp/verhaarm.jar | head -c 120; echo'
 
       - name: Deploy + restart (with diagnostics)
         run: |
           set -euo pipefail
-
           ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
             'set -euo pipefail
-             echo "== Pre-deploy checks =="
-             whoami
-             hostname
+             echo "== Pre-deploy =="
              /usr/bin/java -version || true
-
-             echo "== Confirm uploaded jar exists =="
              ls -lah /tmp/verhaarm.jar
 
-             echo "== Stop service =="
              sudo -n /bin/systemctl stop verhaarm
-
-             echo "== Install new jar =="
              sudo -n /bin/mv /tmp/verhaarm.jar /opt/verhaarm/app.jar
              sudo -n /bin/chown root.root /opt/verhaarm/app.jar
              sudo -n /bin/chmod 755 /opt/verhaarm/app.jar
-
-             echo "== Start service =="
              sudo -n /bin/systemctl start verhaarm
 
-             echo "== Status =="
              systemctl --no-pager -l status verhaarm || true
             ' || (
-              echo "== Deploy failed: dumping diagnostics =="
-
               ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
                 "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
                 'set -euo pipefail
-                 echo "Remote user: $(whoami)"
-                 echo "Does /tmp/verhaarm.jar exist?"
+                 echo "== Diagnostics =="
                  ls -lah /tmp/verhaarm.jar || true
-                 echo "Service status:"
                  systemctl --no-pager -l status verhaarm || true
-                 echo "Last 200 journal lines:"
                  journalctl -u verhaarm -n 200 --no-pager || true
                 ' || true
-
               exit 1
             )
