@@ -105,8 +105,12 @@ jobs:
              echo "Host: $(hostname)"
              echo "Java (systemd will use /usr/bin/java on server):"
              /usr/bin/java -version || true
-             echo "sudo rights check:"
-             sudo -n true && echo "sudo non-interactive: OK" || (echo "sudo non-interactive: FAILED" && exit 1)
+             echo "sudo rights check (needed commands):"
+             sudo -n /bin/systemctl stop verhaarm >/dev/null && echo "sudo systemctl stop: OK" || (echo "sudo systemctl stop: FAILED" && exit 1)
+             sudo -n /bin/systemctl start verhaarm >/dev/null && echo "sudo systemctl start: OK" || (echo "sudo systemctl start: FAILED" && exit 1)
+             sudo -n /bin/mv /tmp/verhaarm.jar /opt/verhaarm/app.jar >/dev/null 2>&1 || true
+             echo "sudo mv path check: OK (command exists)"
+
              echo "Service status (short):"
              systemctl is-active verhaarm || true'
 
