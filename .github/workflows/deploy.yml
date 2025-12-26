@@ -1,4 +1,5 @@
-name: Build & Deploy Backend
+# .github/workflows/deploy.yml
+name: Build & Deploy Backend (Verbose Debug)
 
 on:
   workflow_dispatch:
@@ -24,37 +25,113 @@ jobs:
 
       - name: Build with Maven Wrapper
         working-directory: verhaarm-backend
+        shell: bash
         run: |
           set -euo pipefail
+          echo "== Maven build =="
+          java -version
           chmod +x ./mvnw
           ./mvnw -B clean package -DskipTests
+          echo "== Target directory contents =="
+          ls -lah target || true
 
-      - name: Prepare SSH
+      - name: Prepare SSH key + host key (verbose)
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "== Runner info =="
+          whoami
+          uname -a
+          ssh -V || true
+          openssl version || true
+
+          echo "== Write private key from secret to ~/.ssh/id_ed25519 =="
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          # Preserve newlines, strip CRLF if present
           printf '%s' "${{ secrets.VPS_SSH_KEY }}" | tr -d '\r' > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Upload JAR to VPS (/tmp/verhaarm.jar)
+          echo "== Key file metadata (safe) =="
+          # Byte count helps detect truncation
+          wc -c ~/.ssh/id_ed25519
+          # Do NOT print the key. Show only first/last lines masked.
+          echo "-- masked head --"
+          head -n 3 ~/.ssh/id_ed25519 | sed 's/./*/g'
+          echo "-- masked tail --"
+          tail -n 3 ~/.ssh/id_ed25519 | sed 's/./*/g'
+
+          echo "== Try to parse key (must succeed; otherwise secret is corrupted) =="
+          set +e
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null 2>~/.ssh/key_parse_err.log
+          PARSE_RC=$?
+          set -e
+          if [ "$PARSE_RC" -ne 0 ]; then
+            echo "ERROR: ssh-keygen could not parse the private key. This usually means the secret is corrupted/truncated or lost newlines."
+            echo "---- ssh-keygen error ----"
+            cat ~/.ssh/key_parse_err.log
+            echo "--------------------------"
+            exit 1
+          fi
+
+          echo "== Private key fingerprint (safe) =="
+          ssh-keygen -lf ~/.ssh/id_ed25519
+
+          echo "== known_hosts for VPS (ssh-keyscan) =="
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" 2>/dev/null | tee -a ~/.ssh/known_hosts >/dev/null
+          echo "known_hosts lines:"
+          wc -l ~/.ssh/known_hosts
+
+      - name: Upload JAR to VPS (/tmp/verhaarm.jar) (scp -vvv)
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "== Pick JAR artifact (avoid .original) =="
           JAR_PATH="$(ls -1 verhaarm-backend/target/verhaarm-backend-*.jar | grep -v '\.original$' | head -n 1)"
+          if [ -z "${JAR_PATH:-}" ]; then
+            echo "ERROR: Could not find built JAR under verhaarm-backend/target/"
+            ls -lah verhaarm-backend/target || true
+            exit 1
+          fi
           echo "Uploading: ${JAR_PATH}"
-          scp \
+          ls -lah "${JAR_PATH}"
+
+          echo "== scp verbose output =="
+          scp -vvv \
             -i ~/.ssh/id_ed25519 \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             "${JAR_PATH}" \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/verhaarm.jar"
 
-      - name: Restart service on VPS
+      - name: Remote preflight (ssh -vvv)
         shell: bash
         run: |
           set -euo pipefail
+          echo "== SSH connectivity test (verbose) =="
+          ssh -vvv \
+            -i ~/.ssh/id_ed25519 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            'set -euo pipefail
+             echo "Connected as: $(whoami)"
+             echo "Host: $(hostname)"
+             echo "Java (systemd will use /usr/bin/java on server):"
+             /usr/bin/java -version || true
+             echo "sudo rights check:"
+             sudo -n true && echo "sudo non-interactive: OK" || (echo "sudo non-interactive: FAILED" && exit 1)
+             echo "Service status (short):"
+             systemctl is-active verhaarm || true'
+
+      - name: Restart service on VPS (deploy)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "== Deploy + restart =="
           ssh \
             -i ~/.ssh/id_ed25519 \
             -o IdentitiesOnly=yes \
@@ -65,4 +142,6 @@ jobs:
              sudo mv /tmp/verhaarm.jar /opt/verhaarm/app.jar
              sudo chown root.root /opt/verhaarm/app.jar
              sudo chmod 755 /opt/verhaarm/app.jar
-             sudo systemctl start verhaarm'
+             sudo systemctl start verhaarm
+             echo "Started. systemctl status (no pager):"
+             systemctl status verhaarm --no-pager -l | sed -n "1,80p"'
