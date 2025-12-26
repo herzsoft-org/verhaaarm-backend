@@ -35,7 +35,7 @@ jobs:
           echo "== Target directory contents =="
           ls -lah target || true
 
-      - name: Prepare SSH key + host key (verbose)
+      - name: Prepare SSH key + host key (base64, verbose)
         shell: bash
         run: |
           set -euo pipefail
@@ -46,43 +46,26 @@ jobs:
           ssh -V || true
           openssl version || true
 
-          echo "== Write private key from secret to ~/.ssh/id_ed25519 =="
+          echo "== Write private key from base64 secret to ~/.ssh/id_ed25519 =="
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
-          # Preserve newlines, strip CRLF if present
-          printf '%s' "${{ secrets.VPS_SSH_KEY }}" | tr -d '\r' > ~/.ssh/id_ed25519
+          printf '%s' "${{ secrets.VPS_SSH_KEY_B64 }}" | base64 -d > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
-          echo "== Key file metadata (safe) =="
-          # Byte count helps detect truncation
+          echo "== Key file byte count (should be much larger than 418) =="
           wc -c ~/.ssh/id_ed25519
-          # Do NOT print the key. Show only first/last lines masked.
-          echo "-- masked head --"
-          head -n 3 ~/.ssh/id_ed25519 | sed 's/./*/g'
-          echo "-- masked tail --"
-          tail -n 3 ~/.ssh/id_ed25519 | sed 's/./*/g'
 
-          echo "== Try to parse key (must succeed; otherwise secret is corrupted) =="
-          set +e
-          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null 2>~/.ssh/key_parse_err.log
-          PARSE_RC=$?
-          set -e
-          if [ "$PARSE_RC" -ne 0 ]; then
-            echo "ERROR: ssh-keygen could not parse the private key. This usually means the secret is corrupted/truncated or lost newlines."
-            echo "---- ssh-keygen error ----"
-            cat ~/.ssh/key_parse_err.log
-            echo "--------------------------"
-            exit 1
-          fi
+          echo "== Parse key (must succeed) =="
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
 
           echo "== Private key fingerprint (safe) =="
           ssh-keygen -lf ~/.ssh/id_ed25519
 
           echo "== known_hosts for VPS (ssh-keyscan) =="
           ssh-keyscan -H "${{ secrets.VPS_HOST }}" 2>/dev/null | tee -a ~/.ssh/known_hosts >/dev/null
-          echo "known_hosts lines:"
           wc -l ~/.ssh/known_hosts
+
 
       - name: Upload JAR to VPS (/tmp/verhaarm.jar) (scp -vvv)
         shell: bash
