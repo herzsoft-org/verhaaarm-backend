@@ -87,6 +87,12 @@ public class UserController {
 		return ResponseEntity.noContent().build();
 	}
 
+	@GetMapping("/me")
+	public UserDto me(Authentication auth) {
+		UserEntity actor = resolveActor(auth);
+		if (actor == null) throw ApiErrors.forbidden("Forbidden");
+		return users.getUser(actor.getId());
+	}
 
 	// -------- BALANCE --------
 	// periodId optional:
