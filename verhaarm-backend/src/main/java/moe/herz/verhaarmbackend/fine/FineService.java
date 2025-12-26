@@ -1,5 +1,7 @@
 package moe.herz.verhaarmbackend.fine;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import moe.herz.verhaarmbackend.audit.AuditLogService;
 import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.fine.dto.CreateFineRequest;
@@ -7,13 +9,12 @@ import moe.herz.verhaarmbackend.fine.dto.FineDto;
 import moe.herz.verhaarmbackend.fine.dto.UpdateFineRequest;
 import moe.herz.verhaarmbackend.finecatalog.FineCatalogItemEntity;
 import moe.herz.verhaarmbackend.finecatalog.FineCatalogRepository;
+import moe.herz.verhaarmbackend.finephoto.FinePhotoService;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserRole;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.PersistenceContext;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.*;
@@ -24,14 +25,21 @@ public class FineService {
 	private final FineRepository fines;
 	private final FineCatalogRepository catalog;
 	private final AuditLogService audit;
+	private final FinePhotoService finePhotos;
 
 	@PersistenceContext
 	private EntityManager em;
 
-	public FineService(FineRepository fines, FineCatalogRepository catalog, AuditLogService audit) {
+	public FineService(
+			FineRepository fines,
+			FineCatalogRepository catalog,
+			AuditLogService audit,
+			FinePhotoService finePhotos
+	) {
 		this.fines = fines;
 		this.catalog = catalog;
 		this.audit = audit;
+		this.finePhotos = finePhotos;
 	}
 
 	@Transactional(readOnly = true)
@@ -224,6 +232,13 @@ public class FineService {
 		return toDto(reloaded);
 	}
 
+	/**
+	 * HARD DELETE:
+	 * - deletes fine's upload directory (best effort)
+	 * - deletes fine row
+	 *   -> DB cascades delete fine_photos rows via FK ON DELETE CASCADE
+	 *   -> fine_targets rows should also be removed (typically via FK); if not, your schema should add it.
+	 */
 	@Transactional
 	public void delete(UUID id, UserEntity actor) {
 		var f = fines.findVisibleById(id).orElseThrow(() -> ApiErrors.notFound("Fine not found"));
@@ -242,15 +257,20 @@ public class FineService {
 			}
 		}
 
-		f.setDeletedAt(OffsetDateTime.now());
-		fines.save(f);
-
-		// AUDIT: fine deleted (soft delete)
+		// optional audit record
 		var d = audit.obj();
 		audit.put(d, "fineId", f.getId());
 		audit.put(d, "fineDate", f.getFineDate() == null ? null : f.getFineDate().toString());
-		audit.put(d, "deletedAt", f.getDeletedAt() == null ? null : f.getDeletedAt().toString());
-		audit.log(actor, "fine.delete", d);
+		audit.put(d, "deletedAt", OffsetDateTime.now().toString());
+		audit.log(actor, "fine.delete.hard", d);
+
+		// remove disk files first (best effort)
+		finePhotos.deleteFineDirectoryBestEffort(id);
+
+		// hard delete DB row
+		fines.delete(f);
+
+		em.flush();
 	}
 
 	private static boolean hasRole(UserEntity u, UserRole role) {

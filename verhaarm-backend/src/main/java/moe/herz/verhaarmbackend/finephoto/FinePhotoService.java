@@ -16,7 +16,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
 import java.nio.file.*;
-import java.time.OffsetDateTime;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -56,10 +56,14 @@ public class FinePhotoService {
 				.toList();
 	}
 
+	/**
+	 * Upload: allowed for any authenticated user who can VIEW the fine.
+	 * (Member-only users can only view fines that target them.)
+	 */
 	@Transactional
 	public moe.herz.verhaarmbackend.finephoto.dto.FinePhotoDto upload(UUID fineId, MultipartFile file, UserEntity actor) {
 		FineEntity fine = fines.findVisibleById(fineId).orElseThrow(() -> ApiErrors.notFound("Fine not found"));
-		requireCanEditFine(actor, fine);
+		requireCanUploadPhoto(actor, fine);
 
 		if (file == null || file.isEmpty()) throw ApiErrors.badRequest("File required");
 		if (file.getSize() <= 0) throw ApiErrors.badRequest("File empty");
@@ -108,7 +112,6 @@ public class FinePhotoService {
 
 		photos.save(p);
 
-		// IMPORTANT: created_at is DB-generated (insertable=false), so we must force a DB roundtrip
 		em.flush();
 		em.clear();
 
@@ -132,21 +135,49 @@ public class FinePhotoService {
 		return new Download(new FileSystemResource(file), p.getOriginalFilename(), p.getContentType());
 	}
 
+	/**
+	 * Delete:
+	 * - ADMIN/SENIOR: allowed
+	 * - HOUSEKEEPING: allowed only for own fines
+	 * - Otherwise: uploader can delete their own photo (and must be allowed to view the fine)
+	 *
+	 * Behavior: delete file best-effort + HARD delete DB row.
+	 */
 	@Transactional
 	public void delete(UUID fineId, UUID photoId, UserEntity actor) {
 		FineEntity fine = fines.findVisibleById(fineId).orElseThrow(() -> ApiErrors.notFound("Fine not found"));
-		requireCanEditFine(actor, fine);
 
 		FinePhotoEntity p = photos.findVisibleByIdAndFineId(photoId, fineId)
 				.orElseThrow(() -> ApiErrors.notFound("Photo not found"));
 
-		p.setDeletedAt(OffsetDateTime.now());
-		photos.save(p);
+		requireCanDeletePhoto(actor, fine, p);
 
-		// Optional storage cleanup: remove file on disk (ignore errors)
+		// disk cleanup best-effort
 		try {
 			Path file = baseDir.resolve(fineId.toString()).resolve(p.getStoredFilename());
 			Files.deleteIfExists(file);
+		} catch (Exception ignored) {
+		}
+
+		// hard delete row
+		photos.delete(p);
+	}
+
+	/**
+	 * Used by FineService hard delete. Removes the entire fine directory (best effort).
+	 * This does NOT consult the DB and also clears orphaned dirs.
+	 */
+	@Transactional(readOnly = true)
+	public void deleteFineDirectoryBestEffort(UUID fineId) {
+		Path fineDir = baseDir.resolve(fineId.toString());
+		if (!Files.exists(fineDir)) return;
+
+		try {
+			Files.walk(fineDir)
+					.sorted(Comparator.reverseOrder())
+					.forEach(p -> {
+						try { Files.deleteIfExists(p); } catch (Exception ignored) {}
+					});
 		} catch (Exception ignored) {
 		}
 	}
@@ -174,21 +205,30 @@ public class FinePhotoService {
 		}
 	}
 
-	private static void requireCanEditFine(UserEntity actor, FineEntity fine) {
+	private static void requireCanUploadPhoto(UserEntity actor, FineEntity fine) {
+		requireCanViewFine(actor, fine);
+	}
+
+	private static void requireCanDeletePhoto(UserEntity actor, FineEntity fine, FinePhotoEntity photo) {
 		if (actor == null) throw ApiErrors.forbidden("Forbidden");
 
 		boolean isAdmin = actor.hasRole(UserRole.ADMIN);
 		boolean isSenior = actor.hasRole(UserRole.SENIOR);
 		boolean isHousekeeping = actor.hasRole(UserRole.HOUSEKEEPING);
 
-		if (!(isAdmin || isSenior || isHousekeeping)) {
-			throw ApiErrors.forbidden("Forbidden");
-		}
+		if (isAdmin || isSenior) return;
 
-		if (!isAdmin && !isSenior) {
+		if (isHousekeeping) {
 			if (!fine.getCreatorUserId().equals(actor.getId())) {
 				throw ApiErrors.forbidden("HOUSEKEEPING can only manage photos for own fines");
 			}
+			return;
+		}
+
+		requireCanViewFine(actor, fine);
+
+		if (!photo.getUploaderUserId().equals(actor.getId())) {
+			throw ApiErrors.forbidden("Forbidden");
 		}
 	}
 
@@ -199,7 +239,6 @@ public class FinePhotoService {
 		int slash = n.lastIndexOf('/');
 		if (slash >= 0) n = n.substring(slash + 1);
 
-		// remove control characters (incl. \0)
 		n = n.replaceAll("[\\x00-\\x1F\\x7F]", "");
 
 		if (n.isBlank()) n = "upload";
