@@ -45,7 +45,6 @@ public class ConventPeriodService {
 	@Transactional
 	public ConventPeriodDto create(CreateConventPeriodRequest req) {
 		String semester = normalizeAndValidateSemester(req.semester());
-
 		validateDates(req.startAt(), req.endAt());
 
 		var p = new ConventPeriodEntity(
@@ -95,7 +94,6 @@ public class ConventPeriodService {
 		try {
 			periods.save(p);
 		} catch (DataIntegrityViolationException e) {
-			// Covers: single-active partial unique index and other DB constraints
 			throw ApiErrors.badRequest("Constraint violation (single active period or invalid data)");
 		}
 
@@ -111,7 +109,6 @@ public class ConventPeriodService {
 		try {
 			periods.save(p);
 		} catch (DataIntegrityViolationException e) {
-			// covers the "single active" partial unique index
 			throw ApiErrors.badRequest("Exactly one active period must exist");
 		}
 
@@ -131,14 +128,30 @@ public class ConventPeriodService {
 		return toDto(p);
 	}
 
+	@Transactional
+	public void delete(UUID id) {
+		var p = periods.findById(id).orElseThrow(() -> ApiErrors.notFound("Period not found"));
+
+		// keep your "exactly one active period" invariant
+		if (p.isActive()) {
+			throw ApiErrors.badRequest("Cannot delete the active period; activate another period first");
+		}
+
+		try {
+			periods.delete(p);
+			periods.flush();
+		} catch (DataIntegrityViolationException e) {
+			// If any FK still exists in DB (unexpected), this will catch it.
+			throw ApiErrors.badRequest("Cannot delete period due to existing references");
+		}
+	}
+
 	private void activateInternal(ConventPeriodEntity target) {
 		if (target.isLocked()) {
 			throw ApiErrors.badRequest("Cannot activate a locked period");
 		}
 
-		// DB-side bulk update: deactivate any other active period in one statement
 		periods.deactivateAllExcept(target.getId());
-
 		target.setActive(true);
 	}
 
@@ -157,7 +170,6 @@ public class ConventPeriodService {
 		}
 		String s = semester.trim().toUpperCase(Locale.ROOT);
 
-		// Enforce your intended format: WS24/25 or SS25
 		if (!SEMESTER_PATTERN.matcher(s).matches()) {
 			throw ApiErrors.badRequest("Invalid semester format. Use WS24/25 or SS25");
 		}

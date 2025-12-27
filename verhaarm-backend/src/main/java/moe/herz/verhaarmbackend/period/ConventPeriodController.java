@@ -63,4 +63,11 @@ public class ConventPeriodController {
 	public ConventPeriodDto lock(@PathVariable UUID id) {
 		return periods.lock(id);
 	}
+
+	// ADMIN or SENIOR: DELETE a (non-active) period
+	@DeleteMapping("/{id}")
+	@PreAuthorize("hasRole('ADMIN') or hasRole('SENIOR')")
+	public void delete(@PathVariable UUID id) {
+		periods.delete(id);
+	}
 }
