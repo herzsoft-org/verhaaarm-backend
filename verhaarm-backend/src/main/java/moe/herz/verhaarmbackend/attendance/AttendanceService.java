@@ -9,8 +9,6 @@ import moe.herz.verhaarmbackend.fine.FineRepository;
 import moe.herz.verhaarmbackend.fine.FineType;
 import moe.herz.verhaarmbackend.finecatalog.FineCatalogItemEntity;
 import moe.herz.verhaarmbackend.finecatalog.FineCatalogRepository;
-import moe.herz.verhaarmbackend.period.ConventPeriodEntity;
-import moe.herz.verhaarmbackend.period.ConventPeriodRepository;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserRole;
 import org.springframework.stereotype.Service;
@@ -25,10 +23,11 @@ import java.util.*;
 @Service
 public class AttendanceService {
 
+	private static final short GLOBAL_CFG_ID = 1;
+
 	private final AttendanceRepository attendance;
 	private final AttendanceFineConfigRepository configs;
 	private final EventRepository events;
-	private final ConventPeriodRepository periods;
 	private final FineRepository fines;
 	private final FineCatalogRepository catalog;
 
@@ -39,40 +38,35 @@ public class AttendanceService {
 			AttendanceRepository attendance,
 			AttendanceFineConfigRepository configs,
 			EventRepository events,
-			ConventPeriodRepository periods,
 			FineRepository fines,
 			FineCatalogRepository catalog
 	) {
 		this.attendance = attendance;
 		this.configs = configs;
 		this.events = events;
-		this.periods = periods;
 		this.fines = fines;
 		this.catalog = catalog;
 	}
 
 	// --------------------
-	// Attendance fine config (per period)
+	// Attendance fine config (GLOBAL, not per period)
 	// --------------------
 
 	@Transactional(readOnly = true)
-	public AttendanceFineConfigDto getConfig(UUID periodId, UserEntity actor) {
+	public AttendanceFineConfigDto getConfig(UserEntity actor) {
 		requireSeniorOrHousekeepingOrAdmin(actor);
 
-		periods.findById(periodId).orElseThrow(() -> ApiErrors.badRequest("Period not found"));
-
-		return configs.findById(periodId)
+		return configs.findById(GLOBAL_CFG_ID)
 				.map(this::toDto)
-				.orElseGet(() -> new AttendanceFineConfigDto(periodId, null, null, null, null, null, null));
+				.orElseGet(() -> new AttendanceFineConfigDto(null, null, null, null, null, null, null));
 	}
 
 	@Transactional
-	public AttendanceFineConfigDto setConfig(UUID periodId, SetAttendanceFineConfigRequest req, UserEntity actor) {
+	public AttendanceFineConfigDto setConfig(SetAttendanceFineConfigRequest req, UserEntity actor) {
 		requireSeniorOrHousekeepingOrAdmin(actor);
 
-		periods.findById(periodId).orElseThrow(() -> ApiErrors.badRequest("Period not found"));
-
-		AttendanceFineConfigEntity cfg = configs.findById(periodId).orElseGet(() -> new AttendanceFineConfigEntity(periodId));
+		AttendanceFineConfigEntity cfg = configs.findById(GLOBAL_CFG_ID)
+				.orElseGet(() -> new AttendanceFineConfigEntity(GLOBAL_CFG_ID));
 
 		applyOne("LATE", req.lateCatalogItemId(), req.lateReason(), req.lateAmountCents());
 		applyOne("ABSENT", req.absentCatalogItemId(), req.absentReason(), req.absentAmountCents());
@@ -126,7 +120,6 @@ public class AttendanceService {
 
 	@Transactional(readOnly = true)
 	public List<AttendanceDto> listForEvent(UUID eventId, UserEntity actor) {
-		// use actor (removes warning) without changing permissions beyond "must be authenticated"
 		if (actor == null) throw ApiErrors.forbidden("Forbidden");
 
 		events.findVisibleById(eventId).orElseThrow(() -> ApiErrors.notFound("Event not found"));
@@ -198,7 +191,7 @@ public class AttendanceService {
 	}
 
 	// --------------------
-	// Generate fines from attendance (IDEMPOTENT + CONCURRENCY-SAFE)
+	// Generate fines from attendance (GLOBAL config + event date)
 	// --------------------
 
 	@Transactional
@@ -207,16 +200,12 @@ public class AttendanceService {
 
 		EventEntity event = events.findVisibleById(eventId).orElseThrow(() -> ApiErrors.notFound("Event not found"));
 
-		ConventPeriodEntity derivedPeriod = periods.findCovering(event.getStartsAt())
-				.orElseThrow(() -> ApiErrors.badRequest("No convent period covers event date"));
-
-		AttendanceFineConfigEntity cfg = configs.findById(derivedPeriod.getId())
-				.orElseThrow(() -> ApiErrors.badRequest("Attendance fine config not set for derived period"));
+		AttendanceFineConfigEntity cfg = configs.findById(GLOBAL_CFG_ID)
+				.orElseThrow(() -> ApiErrors.badRequest("Attendance fine config not set"));
 
 		boolean dryRun = req != null && req.dryRun();
 
 		List<AttendanceEntity> rows = attendance.findVisibleByEventForUpdate(eventId);
-
 		List<UUID> fineIds = new ArrayList<>();
 
 		LocalDate fineDate = event.getStartsAt().toLocalDate();
@@ -253,7 +242,6 @@ public class AttendanceService {
 						.orElseThrow(() -> ApiErrors.notFound("Linked fine not found"));
 
 				f.setFineDate(fineDate);
-
 				f.setCatalogItemId(tmpl.catalogItemId);
 				f.setReason(tmpl.reason);
 				f.setAmountCents(tmpl.amountCents);
@@ -263,7 +251,6 @@ public class AttendanceService {
 				f.addTarget(a.getUserId());
 
 				fines.save(f);
-
 				fineIds.add(f.getId());
 			}
 		}
@@ -333,8 +320,10 @@ public class AttendanceService {
 	}
 
 	private AttendanceFineConfigDto toDto(AttendanceFineConfigEntity c) {
+		// Your DTO currently has periodId as first field; now it's "not applicable".
+		// We return null there.
 		return new AttendanceFineConfigDto(
-				c.getPeriodId(),
+				null,
 				c.getLateCatalogItemId(),
 				c.getLateReason(),
 				c.getLateAmountCents(),

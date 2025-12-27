@@ -77,7 +77,6 @@ public class EventService {
 		var reloaded = events.findVisibleById(e.getId())
 				.orElseThrow(() -> ApiErrors.notFound("Event not found"));
 
-		// AUDIT: event created
 		var d = audit.obj();
 		audit.put(d, "eventId", reloaded.getId());
 		audit.put(d, "creatorUserId", reloaded.getCreatorUserId());
@@ -109,7 +108,6 @@ public class EventService {
 			}
 		}
 
-		// snapshot before
 		String beforeTitle = e.getTitle();
 		OffsetDateTime beforeStartsAt = e.getStartsAt();
 		boolean beforeMandatory = e.isMandatory();
@@ -131,7 +129,6 @@ public class EventService {
 
 		events.save(e);
 
-		// AUDIT: event updated
 		var d = audit.obj();
 		audit.put(d, "eventId", e.getId());
 
@@ -175,7 +172,14 @@ public class EventService {
 		e.setDeletedAt(OffsetDateTime.now());
 		events.save(e);
 
-		// AUDIT: event deleted
+		// Also soft-delete attendance exceptions for this event (attendance is event-bound).
+		em.createNativeQuery("""
+			update attendance
+			set deleted_at = now()
+			where event_id = :eventId
+			  and deleted_at is null
+		""").setParameter("eventId", id).executeUpdate();
+
 		var d = audit.obj();
 		audit.put(d, "eventId", e.getId());
 		audit.put(d, "deletedAt", e.getDeletedAt() == null ? null : e.getDeletedAt().toString());

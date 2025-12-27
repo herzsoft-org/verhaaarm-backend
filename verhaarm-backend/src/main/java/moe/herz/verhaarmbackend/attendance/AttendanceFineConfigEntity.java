@@ -10,8 +10,8 @@ import java.util.UUID;
 public class AttendanceFineConfigEntity {
 
 	@Id
-	@Column(name = "period_id", nullable = false)
-	private UUID periodId;
+	@Column(name = "config_id", nullable = false)
+	private short configId;
 
 	@Column(name = "late_catalog_item_id")
 	private UUID lateCatalogItemId;
@@ -41,11 +41,11 @@ public class AttendanceFineConfigEntity {
 		// JPA
 	}
 
-	public AttendanceFineConfigEntity(UUID periodId) {
-		this.periodId = periodId;
+	public AttendanceFineConfigEntity(short configId) {
+		this.configId = configId;
 	}
 
-	public UUID getPeriodId() { return periodId; }
+	public short getConfigId() { return configId; }
 
 	public UUID getLateCatalogItemId() { return lateCatalogItemId; }
 	public String getLateReason() { return lateReason; }

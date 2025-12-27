@@ -21,15 +21,15 @@ public class AttendanceController {
 		this.users = users;
 	}
 
-	// ---- Config per period
-	@GetMapping("/periods/{periodId}/attendance-fines")
-	public AttendanceFineConfigDto getConfig(@PathVariable UUID periodId, Authentication auth) {
-		return attendance.getConfig(periodId, actor(auth));
+	// ---- Global attendance fine config (no period tie)
+	@GetMapping("/attendance-fines")
+	public AttendanceFineConfigDto getConfig(Authentication auth) {
+		return attendance.getConfig(actor(auth));
 	}
 
-	@PutMapping("/periods/{periodId}/attendance-fines")
-	public AttendanceFineConfigDto setConfig(@PathVariable UUID periodId, @RequestBody SetAttendanceFineConfigRequest req, Authentication auth) {
-		return attendance.setConfig(periodId, req, actor(auth));
+	@PutMapping("/attendance-fines")
+	public AttendanceFineConfigDto setConfig(@RequestBody SetAttendanceFineConfigRequest req, Authentication auth) {
+		return attendance.setConfig(req, actor(auth));
 	}
 
 	// ---- Attendance exceptions per event
