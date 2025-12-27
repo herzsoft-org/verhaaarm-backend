@@ -1,0 +1,112 @@
+name: Build & Deploy Backend
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: verhaaarm-backend-deploy
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Build with Maven Wrapper
+        working-directory: verhaarm-backend
+        run: |
+          set -euo pipefail
+          chmod +x ./mvnw
+          ./mvnw -B clean package -DskipTests
+
+      - name: Pick JAR artifact (avoid .original)
+        id: jar
+        run: |
+          set -euo pipefail
+          echo "== Target dir listing =="
+          ls -lah verhaarm-backend/target || true
+
+          JAR_REL="$(ls -1t verhaarm-backend/target/*.jar \
+            | grep -vE '\.original\.jar$|-(sources|javadoc)\.jar$' \
+            | head -n1)"
+
+          if [ -z "${JAR_REL:-}" ]; then
+            echo "ERROR: No deployable JAR found."
+            exit 1
+          fi
+
+          JAR_ABS="${GITHUB_WORKSPACE}/${JAR_REL}"
+          echo "Selected JAR (rel): $JAR_REL"
+          echo "Selected JAR (abs): $JAR_ABS"
+          ls -lah "$JAR_ABS"
+
+          echo "jar_abs=$JAR_ABS" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare SSH (base64 secret)
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s' "${{ secrets.VPS_SSH_KEY_B64 }}" | base64 -d > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload JAR to VPS (/tmp/verhaarm.jar) + verify
+        run: |
+          set -euo pipefail
+          LOCAL_JAR="${{ steps.jar.outputs.jar_abs }}"
+          echo "Uploading: $LOCAL_JAR"
+          test -f "$LOCAL_JAR"
+
+          scp -v \
+            -i ~/.ssh/id_ed25519 \
+            -o StrictHostKeyChecking=yes \
+            "$LOCAL_JAR" \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/verhaarm.jar"
+
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            'set -euo pipefail
+             echo "Remote user: $(whoami)"; echo "Host: $(hostname)"
+             ls -lah /tmp/verhaarm.jar
+             sha256sum /tmp/verhaarm.jar | head -c 120; echo'
+
+      - name: Deploy + restart (with diagnostics)
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            'set -euo pipefail
+             echo "== Pre-deploy =="
+             /usr/bin/java -version || true
+             ls -lah /tmp/verhaarm.jar
+
+             sudo -n /bin/systemctl stop verhaarm
+             sudo -n /bin/mv /tmp/verhaarm.jar /opt/verhaarm/app.jar
+             sudo -n /bin/chown root.root /opt/verhaarm/app.jar
+             sudo -n /bin/chmod 755 /opt/verhaarm/app.jar
+             sudo -n /bin/systemctl start verhaarm
+
+             systemctl --no-pager -l status verhaarm || true
+            ' || (
+              ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
+                "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+                'set -euo pipefail
+                 echo "== Diagnostics =="
+                 ls -lah /tmp/verhaarm.jar || true
+                 systemctl --no-pager -l status verhaarm || true
+                 journalctl -u verhaarm -n 200 --no-pager || true
+                ' || true
+              exit 1
+            )
