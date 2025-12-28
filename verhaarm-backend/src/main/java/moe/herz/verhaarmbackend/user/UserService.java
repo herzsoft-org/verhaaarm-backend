@@ -342,8 +342,8 @@ public class UserService {
 			if (newRoles.contains(UserRole.TREASURER)) treasurer++;
 		}
 
-		if (seniors != 1)
-			throw ApiErrors.badRequest("Exactly one SENIOR must exist (enabled users)");
+		if (seniors < 1)
+			throw ApiErrors.badRequest("At least one SENIOR must exist (enabled users)");
 		if (housekeeping < 1)
 			throw ApiErrors.badRequest("At least one HOUSEKEEPING must exist (enabled users)");
 		if (treasurer < 1)
