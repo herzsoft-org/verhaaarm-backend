@@ -153,8 +153,7 @@ public class UserService {
 			throw ApiErrors.badRequest("Username already exists");
 		}
 
-		Set<UserRole> newRoles = parseRoles(req.roles());
-		if (newRoles.isEmpty()) newRoles = Set.of(UserRole.MEMBER);
+		Set<UserRole> newRoles = enforceSingleRole(parseRoles(req.roles()));
 
 		validateRoleConstraintsOnChange(null, false, newRoles, false);
 
@@ -205,6 +204,7 @@ public class UserService {
 			Set<UserRole> parsed = parseRoles(req.roles());
 			newRoles = parsed.isEmpty() ? Set.of(UserRole.MEMBER) : parsed;
 		}
+		newRoles = enforceSingleRole(newRoles);
 
 		// SENIOR cannot assign ADMIN
 		if (!actorIsAdmin && newRoles.contains(UserRole.ADMIN)) {
@@ -370,6 +370,20 @@ public class UserService {
 			}
 		}
 		return out;
+	}
+
+	/**
+	 * Enforce "exactly one effective role" at the API boundary.
+	 *
+	 * Rules:
+	 *  - null/empty => MEMBER
+	 *  - size==1    => ok
+	 *  - size>1     => 400 (client must pick exactly one)
+	 */
+	private static Set<UserRole> enforceSingleRole(Set<UserRole> roles) {
+		if (roles == null || roles.isEmpty()) return Set.of(UserRole.MEMBER);
+		if (roles.size() != 1) throw ApiErrors.badRequest("Exactly one role must be set");
+		return roles;
 	}
 
 	private UserDto toDto(UserEntity u) {
