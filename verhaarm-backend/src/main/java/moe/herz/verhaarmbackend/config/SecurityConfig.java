@@ -42,6 +42,8 @@ public class SecurityConfig {
 						.requestMatchers("/auth/**").permitAll()
 						.requestMatchers("/error").permitAll()
 
+						.requestMatchers("/public/**").permitAll()
+
 						// Swagger UI assets must load without JWT (protected by Nginx basic auth)
 						.requestMatchers("/swagger-ui.html", "/swagger-ui/**").permitAll()
 						.requestMatchers("/v3/api-docs/**").permitAll()
