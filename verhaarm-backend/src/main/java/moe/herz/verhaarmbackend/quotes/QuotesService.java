@@ -12,7 +12,7 @@ import java.util.concurrent.locks.ReentrantLock;
 @Service
 public class QuotesService {
 
-	private static final URI QUOTES_URI = URI.create("https://herz.moe/verhaarm/zitate.json");
+	private static final URI QUOTES_URI = URI.create("https://herz.moe/zitate/zitate.json");
 	private static final Duration TTL = Duration.ofMinutes(2);
 
 	private final HttpClient http = HttpClient.newBuilder()
