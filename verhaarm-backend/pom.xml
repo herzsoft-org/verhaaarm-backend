@@ -135,19 +135,24 @@
             <artifactId>spring-boot-starter-webmvc-test</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- BouncyCastle (required by nl.martijndwars:web-push for VAPID / EC keys) -->
         <!-- BouncyCastle (required by nl.martijndwars:web-push at compile time) -->
         <dependency>
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcprov-jdk18on</artifactId>
             <version>1.83</version>
         </dependency>
-
         <dependency>
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcpkix-jdk18on</artifactId>
             <version>1.83</version>
         </dependency>
+        <!-- Optional: bcutil if required by your code/other transitive deps -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcutil-jdk18on</artifactId>
+            <version>1.83</version>
+        </dependency>
+
 
 
     </dependencies>
