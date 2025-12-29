@@ -21,11 +21,21 @@ public class FineCatalogController {
 	}
 
 	// Any authenticated user can read the catalog
-	// Optional: /fine-catalog?active=true to only show active items
+	// Optional:
+	// - /fine-catalog?active=true to only show active items
+	// - /fine-catalog?forCreation=true to hide attendance system items (Absent/Late)
+	// - can be combined: /fine-catalog?active=true&forCreation=true
 	@GetMapping
-	public List<FineCatalogItemDto> list(@RequestParam(required = false) Boolean active) {
+	public List<FineCatalogItemDto> list(
+			@RequestParam(required = false) Boolean active,
+			@RequestParam(required = false) Boolean forCreation
+	) {
 		boolean activeOnly = active != null && active;
-		return catalog.listVisible(activeOnly);
+		boolean creation = forCreation != null && forCreation;
+
+		return creation
+				? catalog.listForManualFineCreation(activeOnly)
+				: catalog.listVisible(activeOnly);
 	}
 
 	@GetMapping("/{id}")

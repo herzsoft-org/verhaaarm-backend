@@ -172,13 +172,34 @@ public class EventService {
 		e.setDeletedAt(OffsetDateTime.now());
 		events.save(e);
 
-		// Also soft-delete attendance exceptions for this event (attendance is event-bound).
+		// Also delete attendance exceptions + their linked fines for this event.
+
+		// 1) Collect fine IDs
+		@SuppressWarnings("unchecked")
+		var fineIds = em.createNativeQuery("""
+			select fine_id
+			from attendance
+			where event_id = :eventId
+			  and deleted_at is null
+			  and fine_id is not null
+		""").setParameter("eventId", id).getResultList();
+
+		// 2) Unlink fine_id and soft-delete attendance rows
 		em.createNativeQuery("""
 			update attendance
-			set deleted_at = now()
+			set fine_id = null,
+			    deleted_at = now()
 			where event_id = :eventId
 			  and deleted_at is null
 		""").setParameter("eventId", id).executeUpdate();
+
+		// 3) Hard-delete fines (fine_targets cascades)
+		if (fineIds != null && !fineIds.isEmpty()) {
+			em.createNativeQuery("""
+				delete from fines
+				where id = any(:ids)
+			""").setParameter("ids", fineIds.toArray()).executeUpdate();
+		}
 
 		var d = audit.obj();
 		audit.put(d, "eventId", e.getId());

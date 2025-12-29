@@ -16,13 +16,29 @@ public class FineCatalogService {
 
 	private final FineCatalogRepository catalog;
 
+	private static final UUID SYS_LATE_ID = FineCatalogRepository.SYS_LATE_ID;
+	private static final UUID SYS_ABSENT_ID = FineCatalogRepository.SYS_ABSENT_ID;
+
 	public FineCatalogService(FineCatalogRepository catalog) {
 		this.catalog = catalog;
+	}
+
+	private static boolean isSystemAttendanceItem(UUID id) {
+		return SYS_LATE_ID.equals(id) || SYS_ABSENT_ID.equals(id);
 	}
 
 	@Transactional(readOnly = true)
 	public List<FineCatalogItemDto> listVisible(boolean activeOnly) {
 		var items = activeOnly ? catalog.findAllActiveVisible() : catalog.findAllVisible();
+		return items.stream().map(this::toDto).toList();
+	}
+
+	/**
+	 * Catalog list used for manual fine creation UIs: excludes the attendance system items.
+	 */
+	@Transactional(readOnly = true)
+	public List<FineCatalogItemDto> listForManualFineCreation(boolean activeOnly) {
+		var items = activeOnly ? catalog.findAllActiveVisibleForManualCreation() : catalog.findAllVisibleForManualCreation();
 		return items.stream().map(this::toDto).toList();
 	}
 
@@ -60,7 +76,12 @@ public class FineCatalogService {
 		var c = catalog.findById(id).orElseThrow(() -> ApiErrors.notFound("Catalog item not found"));
 		if (c.isDeleted()) throw ApiErrors.notFound("Catalog item not found");
 
+		boolean sys = isSystemAttendanceItem(id);
+
 		if (req.title() != null) {
+			if (sys) {
+				throw ApiErrors.badRequest("This catalog item title cannot be changed");
+			}
 			String title = req.title().trim();
 			if (title.isBlank()) throw ApiErrors.badRequest("Title required");
 			c.setTitle(title);
@@ -73,6 +94,10 @@ public class FineCatalogService {
 		}
 
 		if (req.active() != null) {
+			if (sys) {
+				// keep them always active to avoid “no fine generated” states
+				throw ApiErrors.badRequest("This catalog item cannot be deactivated");
+			}
 			c.setActive(req.active());
 		}
 
@@ -82,6 +107,10 @@ public class FineCatalogService {
 
 	@Transactional
 	public void delete(UUID id) {
+		if (isSystemAttendanceItem(id)) {
+			throw ApiErrors.badRequest("This catalog item cannot be deleted");
+		}
+
 		var c = catalog.findById(id).orElseThrow(() -> ApiErrors.notFound("Catalog item not found"));
 		if (c.isDeleted()) return; // idempotent
 		c.setDeletedAt(OffsetDateTime.now());

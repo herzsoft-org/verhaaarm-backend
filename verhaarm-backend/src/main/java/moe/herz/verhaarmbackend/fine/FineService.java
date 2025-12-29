@@ -76,6 +76,14 @@ public class FineService {
 
 		UUID catalogItemId = req.catalogItemId();
 
+		// Attendance system items must only be created automatically via attendance.
+		if (catalogItemId != null && (
+				FineCatalogRepository.SYS_LATE_ID.equals(catalogItemId) ||
+						FineCatalogRepository.SYS_ABSENT_ID.equals(catalogItemId)
+		)) {
+			throw ApiErrors.badRequest("This catalog item can only be used for automatic attendance fines");
+		}
+
 		String reason;
 		int amountCents;
 		FineType type;
