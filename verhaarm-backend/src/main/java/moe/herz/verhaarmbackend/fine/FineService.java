@@ -10,6 +10,8 @@ import moe.herz.verhaarmbackend.fine.dto.UpdateFineRequest;
 import moe.herz.verhaarmbackend.finecatalog.FineCatalogItemEntity;
 import moe.herz.verhaarmbackend.finecatalog.FineCatalogRepository;
 import moe.herz.verhaarmbackend.finephoto.FinePhotoService;
+import moe.herz.verhaarmbackend.notification.NotificationService;
+import moe.herz.verhaarmbackend.notification.NotificationType;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserRole;
 import org.springframework.stereotype.Service;
@@ -26,6 +28,7 @@ public class FineService {
 	private final FineCatalogRepository catalog;
 	private final AuditLogService audit;
 	private final FinePhotoService finePhotos;
+	private final NotificationService notifications;
 
 	@PersistenceContext
 	private EntityManager em;
@@ -34,12 +37,14 @@ public class FineService {
 			FineRepository fines,
 			FineCatalogRepository catalog,
 			AuditLogService audit,
-			FinePhotoService finePhotos
+			FinePhotoService finePhotos,
+			NotificationService notifications
 	) {
 		this.fines = fines;
 		this.catalog = catalog;
 		this.audit = audit;
 		this.finePhotos = finePhotos;
+		this.notifications = notifications;
 	}
 
 	@Transactional(readOnly = true)
@@ -77,10 +82,10 @@ public class FineService {
 		UUID catalogItemId = req.catalogItemId();
 
 		// Attendance system items must only be created automatically via attendance.
-		if (catalogItemId != null && (
+		if (
 				FineCatalogRepository.SYS_LATE_ID.equals(catalogItemId) ||
 						FineCatalogRepository.SYS_ABSENT_ID.equals(catalogItemId)
-		)) {
+		) {
 			throw ApiErrors.badRequest("This catalog item can only be used for automatic attendance fines");
 		}
 
@@ -145,6 +150,27 @@ public class FineService {
 		audit.put(d, "type", reloaded.getType() == null ? null : reloaded.getType().name());
 		audit.putUuidArray(d, "targetUserIds", reloaded.getTargetUserIds());
 		audit.log(actor, "fine.create", d);
+
+		// NOTIFICATIONS (one per target user)
+
+		var data = new HashMap<String, Object>();
+		data.put("fineId", reloaded.getId().toString());
+		if (reloaded.getFineDate() != null) data.put("fineDate", reloaded.getFineDate().toString());
+		data.put("amountCents", reloaded.getAmountCents());
+
+
+		String title = "Neue Strafe";
+		String body = reloaded.getReason() + " – " + formatEurFromCents(reloaded.getAmountCents());
+		for (UUID targetId : reloaded.getTargetUserIds()) {
+			notifications.createForUser(
+					targetId,
+					NotificationType.FINE_CREATED,
+					title,
+					body,
+					data
+			);
+
+		}
 
 		return toDto(reloaded);
 	}
@@ -245,7 +271,7 @@ public class FineService {
 	 * - deletes fine's upload directory (best effort)
 	 * - deletes fine row
 	 *   -> DB cascades delete fine_photos rows via FK ON DELETE CASCADE
-	 *   -> fine_targets rows should also be removed (typically via FK); if not, your schema should add it.
+	 *   -> fine_targets rows should also be removed (via FK ON DELETE CASCADE)
 	 */
 	@Transactional
 	public void delete(UUID id, UserEntity actor) {
@@ -265,17 +291,13 @@ public class FineService {
 			}
 		}
 
-		// optional audit record
 		var d = audit.obj();
 		audit.put(d, "fineId", f.getId());
 		audit.put(d, "fineDate", f.getFineDate() == null ? null : f.getFineDate().toString());
 		audit.put(d, "deletedAt", OffsetDateTime.now().toString());
 		audit.log(actor, "fine.delete.hard", d);
 
-		// remove disk files first (best effort)
 		finePhotos.deleteFineDirectoryBestEffort(id);
-
-		// hard delete DB row
 		fines.delete(f);
 
 		em.flush();
@@ -289,6 +311,14 @@ public class FineService {
 		boolean hasMember = hasRole(u, UserRole.MEMBER);
 		if (!hasMember) return false;
 		return u.getRoles().stream().map(r -> r.getRole()).allMatch(r -> r == UserRole.MEMBER);
+	}
+
+	private static String formatEurFromCents(long cents) {
+		long abs = Math.abs(cents);
+		long euros = abs / 100;
+		long rem = abs % 100;
+		String sign = cents < 0 ? "-" : "";
+		return sign + euros + "," + (rem < 10 ? "0" + rem : Long.toString(rem)) + " €";
 	}
 
 	private FineDto toDto(FineEntity f) {
