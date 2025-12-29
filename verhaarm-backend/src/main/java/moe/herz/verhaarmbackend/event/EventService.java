@@ -195,10 +195,13 @@ public class EventService {
 
 		// 3) Hard-delete fines (fine_targets cascades)
 		if (fineIds != null && !fineIds.isEmpty()) {
-			em.createNativeQuery("""
-				delete from fines
-				where id = any(:ids)
-			""").setParameter("ids", fineIds.toArray()).executeUpdate();
+			for (Object o : fineIds) {
+				if (o == null) continue;
+				UUID fid = (o instanceof UUID) ? (UUID) o : UUID.fromString(o.toString());
+				em.createNativeQuery("delete from fines where id = :id")
+						.setParameter("id", fid)
+						.executeUpdate();
+			}
 		}
 
 		var d = audit.obj();
