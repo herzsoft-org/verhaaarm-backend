@@ -1,5 +1,8 @@
 package moe.herz.verhaarmbackend.attendance;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import moe.herz.verhaarmbackend.attendance.dto.*;
 import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.event.EventEntity;
 import moe.herz.verhaarmbackend.event.EventRepository;
@@ -13,16 +16,17 @@ import moe.herz.verhaarmbackend.user.UserRole;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.PersistenceContext;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 @Service
 public class AttendanceService {
 
 	private final AttendanceRepository attendance;
+	private final AttendanceFineConfigRepository configs; // kept for API compatibility
 	private final EventRepository events;
 	private final FineRepository fines;
 	private final FineCatalogRepository catalog;
@@ -30,35 +34,129 @@ public class AttendanceService {
 	@PersistenceContext
 	private EntityManager em;
 
+	private static final short GLOBAL_CFG_ID = 1;
+
 	private static final UUID SYS_LATE_ID = FineCatalogRepository.SYS_LATE_ID;
 	private static final UUID SYS_ABSENT_ID = FineCatalogRepository.SYS_ABSENT_ID;
 
 	public AttendanceService(
 			AttendanceRepository attendance,
-			AttendanceFineConfigRepository configs, // kept for wiring compatibility; not used anymore here
+			AttendanceFineConfigRepository configs,
 			EventRepository events,
 			FineRepository fines,
 			FineCatalogRepository catalog
 	) {
 		this.attendance = attendance;
+		this.configs = configs;
 		this.events = events;
 		this.fines = fines;
 		this.catalog = catalog;
 	}
 
 	// --------------------
-	// Attendance exceptions CRUD (per event)
+	// Global attendance fine config (compat layer)
+	// We keep the endpoints, but they now control the two system catalog items.
+	// - catalogItemId fields are always the system IDs
+	// - reason fields are not used (null)
+	// - amount fields mirror the current catalog amounts
 	// --------------------
 
 	@Transactional(readOnly = true)
-	public java.util.List<moe.herz.verhaarmbackend.attendance.dto.AttendanceDto> listForEvent(UUID eventId, UserEntity actor) {
+	public AttendanceFineConfigDto getConfig(UserEntity actor) {
+		requireSeniorOrHousekeepingOrAdmin(actor);
+
+		FineCatalogItemEntity late = catalog.findActiveVisibleById(SYS_LATE_ID)
+				.orElseThrow(() -> ApiErrors.badRequest("Late system catalog item missing or inactive"));
+		FineCatalogItemEntity absent = catalog.findActiveVisibleById(SYS_ABSENT_ID)
+				.orElseThrow(() -> ApiErrors.badRequest("Absent system catalog item missing or inactive"));
+
+		// Keep DB row around for backwards compatibility; ensure it exists.
+		configs.findById(GLOBAL_CFG_ID).orElseGet(() -> {
+			AttendanceFineConfigEntity cfg = new AttendanceFineConfigEntity(GLOBAL_CFG_ID);
+			cfg.setLateCatalogItemId(SYS_LATE_ID);
+			cfg.setAbsentCatalogItemId(SYS_ABSENT_ID);
+			configs.save(cfg);
+			return cfg;
+		});
+
+		return new AttendanceFineConfigDto(
+				null,
+				SYS_LATE_ID,
+				null,
+				late.getDefaultAmountCents(),
+				SYS_ABSENT_ID,
+				null,
+				absent.getDefaultAmountCents()
+		);
+	}
+
+	@Transactional
+	public AttendanceFineConfigDto setConfig(SetAttendanceFineConfigRequest req, UserEntity actor) {
+		requireSeniorOrHousekeepingOrAdmin(actor);
+
+		// Disallow switching to arbitrary catalog items or custom reason/amount.
+		// This feature is now driven by the two protected system items.
+		if (req == null) throw ApiErrors.badRequest("Request required");
+
+		if (req.lateCatalogItemId() != null && !SYS_LATE_ID.equals(req.lateCatalogItemId())) {
+			throw ApiErrors.badRequest("lateCatalogItemId must be the system late item");
+		}
+		if (req.absentCatalogItemId() != null && !SYS_ABSENT_ID.equals(req.absentCatalogItemId())) {
+			throw ApiErrors.badRequest("absentCatalogItemId must be the system absent item");
+		}
+		if (req.lateReason() != null || req.absentReason() != null) {
+			throw ApiErrors.badRequest("Custom reasons are not supported for attendance fines");
+		}
+
+		Integer lateAmount = req.lateAmountCents();
+		Integer absentAmount = req.absentAmountCents();
+
+		if (lateAmount != null && lateAmount < 0) throw ApiErrors.badRequest("Late amount must be >= 0");
+		if (absentAmount != null && absentAmount < 0) throw ApiErrors.badRequest("Absent amount must be >= 0");
+
+		FineCatalogItemEntity late = catalog.findActiveVisibleById(SYS_LATE_ID)
+				.orElseThrow(() -> ApiErrors.badRequest("Late system catalog item missing or inactive"));
+		FineCatalogItemEntity absent = catalog.findActiveVisibleById(SYS_ABSENT_ID)
+				.orElseThrow(() -> ApiErrors.badRequest("Absent system catalog item missing or inactive"));
+
+		// Update amounts if provided
+		if (lateAmount != null) {
+			late.setDefaultAmountCents(lateAmount);
+			catalog.save(late);
+		}
+		if (absentAmount != null) {
+			absent.setDefaultAmountCents(absentAmount);
+			catalog.save(absent);
+		}
+
+		// Ensure config row exists and is pinned to system IDs
+		AttendanceFineConfigEntity cfg = configs.findById(GLOBAL_CFG_ID)
+				.orElseGet(() -> new AttendanceFineConfigEntity(GLOBAL_CFG_ID));
+		cfg.setLateCatalogItemId(SYS_LATE_ID);
+		cfg.setLateReason(null);
+		cfg.setLateAmountCents(null);
+		cfg.setAbsentCatalogItemId(SYS_ABSENT_ID);
+		cfg.setAbsentReason(null);
+		cfg.setAbsentAmountCents(null);
+		configs.save(cfg);
+
+		em.flush();
+		return getConfig(actor);
+	}
+
+	// --------------------
+	// Attendance exceptions per event
+	// --------------------
+
+	@Transactional(readOnly = true)
+	public List<AttendanceDto> listForEvent(UUID eventId, UserEntity actor) {
 		if (actor == null) throw ApiErrors.forbidden("Forbidden");
 		events.findVisibleById(eventId).orElseThrow(() -> ApiErrors.notFound("Event not found"));
 		return attendance.findVisibleByEventId(eventId).stream().map(this::toDto).toList();
 	}
 
 	@Transactional
-	public moe.herz.verhaarmbackend.attendance.dto.AttendanceDto upsert(UUID eventId, moe.herz.verhaarmbackend.attendance.dto.UpsertAttendanceRequest req, UserEntity actor) {
+	public AttendanceDto upsert(UUID eventId, UpsertAttendanceRequest req, UserEntity actor) {
 		requireSeniorOrHousekeepingOrAdmin(actor);
 
 		EventEntity event = events.findVisibleById(eventId).orElseThrow(() -> ApiErrors.notFound("Event not found"));
@@ -144,7 +242,45 @@ public class AttendanceService {
 	}
 
 	// --------------------
-	// Internals: automatic attendance fines
+	// Generate fines (compat endpoint)
+	// Now: ensure all current attendance exceptions have a fine (idempotent).
+	// Does NOT update existing fine snapshots.
+	// --------------------
+
+	@Transactional
+	public GenerateAttendanceFinesResultDto generateFines(UUID eventId, GenerateAttendanceFinesRequest req, UserEntity actor) {
+		requireSeniorOrHousekeepingOrAdmin(actor);
+
+		EventEntity event = events.findVisibleById(eventId).orElseThrow(() -> ApiErrors.notFound("Event not found"));
+
+		boolean dryRun = req != null && req.dryRun();
+
+		// Lock to avoid concurrent double creation
+		List<AttendanceEntity> rows = attendance.findVisibleByEventForUpdate(eventId);
+
+		List<UUID> fineIds = new ArrayList<>();
+
+		for (AttendanceEntity a : rows) {
+			if (a.getFineId() != null) {
+				fineIds.add(a.getFineId());
+				continue;
+			}
+
+			if (dryRun) {
+				fineIds.add(UUID.randomUUID());
+				continue;
+			}
+
+			ensureAttendanceFine(event, a, actor);
+			if (a.getFineId() != null) fineIds.add(a.getFineId());
+		}
+
+		em.flush();
+		return new GenerateAttendanceFinesResultDto(fineIds.size(), fineIds);
+	}
+
+	// --------------------
+	// Internals
 	// --------------------
 
 	private void ensureAttendanceFine(EventEntity event, AttendanceEntity a, UserEntity actor) {
@@ -158,9 +294,7 @@ public class AttendanceService {
 		LocalDate fineDate = event.getStartsAt().toLocalDate();
 
 		// Snapshot semantics: create once. Do not update existing fine when catalog changes later.
-		if (a.getFineId() != null) {
-			return;
-		}
+		if (a.getFineId() != null) return;
 
 		UUID fineId = UUID.randomUUID();
 		FineEntity f = new FineEntity(
@@ -168,8 +302,8 @@ public class AttendanceService {
 				fineDate,
 				actor.getId(),
 				item.getId(),
-				item.getTitle(),               // snapshot title
-				item.getDefaultAmountCents(),  // snapshot amount
+				item.getTitle(),
+				item.getDefaultAmountCents(),
 				FineType.CATALOG
 		);
 		f.addTarget(a.getUserId());
@@ -180,8 +314,6 @@ public class AttendanceService {
 	}
 
 	private void hardDeleteFineById(UUID fineId) {
-		// FineService.delete() enforces role rules and also deletes photo dirs; here we want internal deletion.
-		// These attendance fines should not have photos.
 		fines.findVisibleById(fineId).ifPresent(fines::delete);
 	}
 
@@ -195,8 +327,8 @@ public class AttendanceService {
 		return u.getRoles().stream().anyMatch(r -> r.getRole() == role);
 	}
 
-	private moe.herz.verhaarmbackend.attendance.dto.AttendanceDto toDto(AttendanceEntity a) {
-		return new moe.herz.verhaarmbackend.attendance.dto.AttendanceDto(
+	private AttendanceDto toDto(AttendanceEntity a) {
+		return new AttendanceDto(
 				a.getId(),
 				a.getEventId(),
 				a.getUserId(),
