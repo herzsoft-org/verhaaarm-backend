@@ -88,10 +88,16 @@ public class PushService {
 	private static final Logger log = LoggerFactory.getLogger(PushService.class);
 
 	public void sendForNotification(NotificationEntity n) {
-		if (!cfg.isEnabled()) return;
+		if (!cfg.isEnabled()) {
+			log.debug("Push disabled; skip notificationId={} userId={}", n.getId(), n.getUserId());
+			return;
+		}
 
 		List<PushDeviceEntity> ds = devices.findAllForUser(n.getUserId());
-		if (ds.isEmpty()) return;
+		if (ds.isEmpty()) {
+			log.debug("No push devices; skip notificationId={} userId={}", n.getId(), n.getUserId());
+			return;
+		}
 
 		String payload;
 		try {
@@ -103,8 +109,11 @@ public class PushService {
 					"data", n.getData()
 			));
 		} catch (Exception e) {
+			log.warn("Push payload build failed notificationId={} userId={}", n.getId(), n.getUserId(), e);
 			return;
 		}
+
+		log.info("Push attempt notificationId={} userId={} devices={}", n.getId(), n.getUserId(), ds.size());
 
 		for (PushDeviceEntity d : ds) {
 			try {
@@ -115,7 +124,10 @@ public class PushService {
 					if (d.getFcmToken() == null) continue;
 					fcm.send(d.getFcmToken(), n.getTitle(), n.getBody(), payload);
 				}
-			} catch (Exception ex) { log.warn("Push send failed kind={} deviceId={} userId={}: {}", d.getKind(), d.getId(), d.getUserId(), ex.toString(), ex); }
+			} catch (Exception ex) {
+				log.warn("Push send failed kind={} deviceId={} userId={} notificationId={}: {}",
+						d.getKind(), d.getId(), d.getUserId(), n.getId(), ex.toString(), ex);
+			}
 		}
 	}
 }

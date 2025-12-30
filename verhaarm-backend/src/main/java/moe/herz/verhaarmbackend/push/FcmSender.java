@@ -81,6 +81,9 @@ public class FcmSender {
 			b.putData("data", dataJson);
 		}
 
+		String msgId = FirebaseMessaging.getInstance().send(b.build());
+		System.out.println("FCM sent ok msgId=" + msgId + " tokenPrefix=" + token.substring(0, Math.min(16, token.length())));
+
 		FirebaseMessaging.getInstance().send(b.build());
 	}
 }
