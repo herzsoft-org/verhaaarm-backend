@@ -174,26 +174,24 @@ public class EventService {
 
 		// Also delete attendance exceptions + their linked fines for this event.
 
-		// 1) Collect fine IDs
-		@SuppressWarnings("unchecked")
-		var fineIds = em.createNativeQuery("""
-			select fine_id
-			from attendance
-			where event_id = :eventId
-			  and deleted_at is null
-			  and fine_id is not null
+		// 1) Collect fine IDs from ALL attendance rows (including already soft-deleted)
+				@SuppressWarnings("unchecked")
+				var fineIds = em.createNativeQuery("""
+				  select distinct fine_id
+				  from attendance
+				  where event_id = :eventId
+				    and fine_id is not null
 		""").setParameter("eventId", id).getResultList();
 
-		// 2) Unlink fine_id and soft-delete attendance rows
-		em.createNativeQuery("""
-			update attendance
-			set fine_id = null,
-			    deleted_at = now()
-			where event_id = :eventId
-			  and deleted_at is null
+		// 2) Unlink fine_id on ALL attendance rows, and soft-delete them (idempotent)
+				em.createNativeQuery("""
+				  update attendance
+				  set fine_id = null,
+				      deleted_at = coalesce(deleted_at, now())
+				  where event_id = :eventId
 		""").setParameter("eventId", id).executeUpdate();
 
-		// 3) Hard-delete fines (fine_targets cascades)
+		// 3) Hard-delete fines
 		if (fineIds != null && !fineIds.isEmpty()) {
 			for (Object o : fineIds) {
 				if (o == null) continue;

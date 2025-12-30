@@ -165,35 +165,24 @@ public class FineSuggestionService {
 				s.getType()
 		);
 
+		// keep only the useful attribution
 		f.setSuggesterUserId(s.getCreatorUserId());
-		f.setAcceptedFromSuggestionId(s.getId());
 
-		for (UUID uid : s.getTargetUserIds()) {
-			f.addTarget(uid);
-		}
+		// do NOT keep bidirectional link; it creates FK headaches
+		f.setAcceptedFromSuggestionId(null);
+
+		for (UUID uid : s.getTargetUserIds()) f.addTarget(uid);
 
 		fines.save(f);
 
-		s.markAccepted(actor.getId(), f.getId());
-		suggestions.save(s);
+		// Hard-delete the suggestion (targets cascade)
+		suggestions.delete(s);
 
 		em.flush();
 		em.clear();
 
-		// AUDIT: suggestion accepted
-		var d = audit.obj();
-		audit.put(d, "suggestionId", s.getId());
-		audit.put(d, "fineDate", s.getFineDate() == null ? null : s.getFineDate().toString());
-		audit.put(d, "fineId", f.getId());
-		audit.put(d, "suggesterUserId", s.getCreatorUserId());
-		audit.put(d, "catalogItemId", s.getCatalogItemId());
-		audit.put(d, "reason", s.getReason());
-		audit.put(d, "amountCents", s.getAmountCents());
-		audit.put(d, "type", s.getType() == null ? null : s.getType().name());
-		audit.putUuidArray(d, "targetUserIds", s.getTargetUserIds());
-		audit.log(actor, "fineSuggestion.accept", d);
-
-		return new FineDtoAcceptResult(s.getId(), f.getId());
+		// optional: keep audit if you want, otherwise remove audit block entirely
+		return new FineDtoAcceptResult(id, f.getId());
 	}
 
 	@Transactional
