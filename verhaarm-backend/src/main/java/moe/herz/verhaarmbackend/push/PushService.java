@@ -6,6 +6,8 @@ import moe.herz.verhaarmbackend.notification.NotificationEntity;
 import moe.herz.verhaarmbackend.push.dto.RegisterFcmRequest;
 import moe.herz.verhaarmbackend.push.dto.RegisterWebPushRequest;
 import moe.herz.verhaarmbackend.user.UserEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -83,6 +85,8 @@ public class PushService {
 		devices.save(d);
 	}
 
+	private static final Logger log = LoggerFactory.getLogger(PushService.class);
+
 	public void sendForNotification(NotificationEntity n) {
 		if (!cfg.isEnabled()) return;
 
@@ -111,11 +115,7 @@ public class PushService {
 					if (d.getFcmToken() == null) continue;
 					fcm.send(d.getFcmToken(), n.getTitle(), n.getBody(), payload);
 				}
-			} catch (Exception ex) {
-				// Best effort: on WebPush, invalid/expired subs often return 404/410.
-				// We keep it simple here: do not delete automatically (yet).
-				// You can extend: detect 410 and remove device.
-			}
+			} catch (Exception ex) { log.warn("Push send failed kind={} deviceId={} userId={}: {}", d.getKind(), d.getId(), d.getUserId(), ex.toString(), ex); }
 		}
 	}
 }

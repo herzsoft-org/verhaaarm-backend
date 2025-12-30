@@ -7,6 +7,8 @@ import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.Message;
 import com.google.firebase.messaging.Notification;
 import org.springframework.stereotype.Component;
+import com.google.firebase.messaging.AndroidConfig;
+import com.google.firebase.messaging.AndroidNotification;
 
 import java.io.ByteArrayInputStream;
 import java.io.FileInputStream;
@@ -29,41 +31,50 @@ public class FcmSender {
 	}
 
 	private void initIfNeeded() throws Exception {
-		if (!initialized.compareAndSet(false, true)) return;
+		if (initialized.get()) return;
 
-		if (!isConfigured()) {
-			return;
-		}
+		if (!isConfigured()) return;
 
-		GoogleCredentials creds;
-		if (cfg.getFcm().getServiceAccountPath() != null && !cfg.getFcm().getServiceAccountPath().isBlank()) {
-			try (FileInputStream in = new FileInputStream(cfg.getFcm().getServiceAccountPath())) {
-				creds = GoogleCredentials.fromStream(in);
+		synchronized (this) {
+			if (initialized.get()) return;
+
+			GoogleCredentials creds;
+			if (cfg.getFcm().getServiceAccountPath() != null && !cfg.getFcm().getServiceAccountPath().isBlank()) {
+				try (FileInputStream in = new FileInputStream(cfg.getFcm().getServiceAccountPath())) {
+					creds = GoogleCredentials.fromStream(in);
+				}
+			} else {
+				byte[] raw = cfg.getFcm().getServiceAccountJson().getBytes(StandardCharsets.UTF_8);
+				try (ByteArrayInputStream in = new ByteArrayInputStream(raw)) {
+					creds = GoogleCredentials.fromStream(in);
+				}
 			}
-		} else {
-			byte[] raw = cfg.getFcm().getServiceAccountJson().getBytes(StandardCharsets.UTF_8);
-			try (ByteArrayInputStream in = new ByteArrayInputStream(raw)) {
-				creds = GoogleCredentials.fromStream(in);
+
+			FirebaseOptions opts = FirebaseOptions.builder()
+					.setCredentials(creds)
+					.build();
+
+			if (FirebaseApp.getApps().isEmpty()) {
+				FirebaseApp.initializeApp(opts);
 			}
-		}
 
-		FirebaseOptions opts = FirebaseOptions.builder()
-				.setCredentials(creds)
-				.build();
-
-		// Avoid double init
-		if (FirebaseApp.getApps().isEmpty()) {
-			FirebaseApp.initializeApp(opts);
+			initialized.set(true);
 		}
 	}
+
 
 	public void send(String token, String title, String body, String dataJson) throws Exception {
 		if (!isConfigured()) return;
 		initIfNeeded();
 
-		// Minimal: notification title/body + one data field (optional)
 		Message.Builder b = Message.builder()
 				.setToken(token)
+				.setAndroidConfig(AndroidConfig.builder()
+						.setPriority(AndroidConfig.Priority.HIGH)
+						.setNotification(AndroidNotification.builder()
+								.setChannelId("verhaarm_push")
+								.build())
+						.build())
 				.setNotification(Notification.builder().setTitle(title).setBody(body).build());
 
 		if (dataJson != null && !dataJson.isBlank()) {
