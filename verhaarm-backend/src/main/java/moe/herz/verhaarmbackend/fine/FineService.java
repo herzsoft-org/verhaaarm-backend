@@ -159,7 +159,7 @@ public class FineService {
 		data.put("amountCents", reloaded.getAmountCents());
 
 
-		String title = "Neue Strafe";
+		String title = "Neue Beihängung";
 		String body = reloaded.getReason() + " – " + formatEurFromCents(reloaded.getAmountCents());
 		for (UUID targetId : reloaded.getTargetUserIds()) {
 			notifications.createForUser(
