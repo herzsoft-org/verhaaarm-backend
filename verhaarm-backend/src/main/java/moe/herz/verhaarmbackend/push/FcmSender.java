@@ -62,7 +62,6 @@ public class FcmSender {
 		}
 	}
 
-
 	public void send(String token, String title, String body, String dataJson) throws Exception {
 		if (!isConfigured()) return;
 		initIfNeeded();
@@ -83,7 +82,5 @@ public class FcmSender {
 
 		String msgId = FirebaseMessaging.getInstance().send(b.build());
 		System.out.println("FCM sent ok msgId=" + msgId + " tokenPrefix=" + token.substring(0, Math.min(16, token.length())));
-
-		FirebaseMessaging.getInstance().send(b.build());
 	}
 }
