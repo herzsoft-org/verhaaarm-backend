@@ -1,9 +1,15 @@
 package moe.herz.verhaarmbackend.user;
 
+import moe.herz.verhaarmbackend.attendance.AttendanceRepository;
 import moe.herz.verhaarmbackend.audit.AuditLogService;
+import moe.herz.verhaarmbackend.auth.RefreshTokenRepository;
 import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.fine.FineRepository;
 import moe.herz.verhaarmbackend.period.ConventPeriodRepository;
+import moe.herz.verhaarmbackend.push.PushDeviceRepository;
+import moe.herz.verhaarmbackend.task.TaskAssigneeEntity;
+import moe.herz.verhaarmbackend.task.TaskAssigneeRepository;
+import moe.herz.verhaarmbackend.task.TaskRepository;
 import moe.herz.verhaarmbackend.user.dto.CreateUserRequest;
 import moe.herz.verhaarmbackend.user.dto.UpdateUserRequest;
 import moe.herz.verhaarmbackend.user.dto.UserBalanceDto;
@@ -26,18 +32,36 @@ public class UserService {
 	private final PasswordEncoder encoder;
 	private final AuditLogService audit;
 
+	// hard delete dependencies
+	private final RefreshTokenRepository refreshTokens;
+	private final PushDeviceRepository pushDevices;
+	private final TaskRepository tasks;
+	private final TaskAssigneeRepository taskAssignees;
+	private final AttendanceRepository attendance;
+
 	public UserService(
 			UserRepository users,
 			FineRepository fines,
 			ConventPeriodRepository periods,
 			PasswordEncoder encoder,
-			AuditLogService audit
+			AuditLogService audit,
+			RefreshTokenRepository refreshTokens,
+			PushDeviceRepository pushDevices,
+			TaskRepository tasks,
+			TaskAssigneeRepository taskAssignees,
+			AttendanceRepository attendance
 	) {
 		this.users = users;
 		this.fines = fines;
 		this.periods = periods;
 		this.encoder = encoder;
 		this.audit = audit;
+
+		this.refreshTokens = refreshTokens;
+		this.pushDevices = pushDevices;
+		this.tasks = tasks;
+		this.taskAssignees = taskAssignees;
+		this.attendance = attendance;
 	}
 
 	// --------------------
@@ -79,14 +103,6 @@ public class UserService {
 	// BALANCE
 	// --------------------
 
-	/**
-	 * Balance = sum(amount_cents) of all non-deleted fines where target user is included.
-	 * Suggestions do not count unless accepted (accepted suggestions are real fines already).
-	 *
-	 * periodId behavior (per your requirement):
-	 *  - if periodId is null => use ACTIVE period only
-	 *  - if periodId provided => that specific period
-	 */
 	@Transactional(readOnly = true)
 	public UserBalanceDto getBalance(UUID targetUserId, UUID periodIdOrNull, UserEntity actor) {
 		if (actor == null) throw ApiErrors.forbidden("Forbidden");
@@ -312,6 +328,73 @@ public class UserService {
 		audit.put(d, "targetUsername", u.getUsername());
 		audit.put(d, "self", self);
 		audit.log(actor, "user.passwordChanged", d);
+	}
+
+	// --------------------
+	// HARD DELETE USER
+	// --------------------
+
+	@Transactional
+	public void hardDeleteUser(UUID targetUserId, UserEntity actor) {
+		if (actor == null || !users.hasRole(actor.getId(), UserRole.ADMIN)) {
+			throw ApiErrors.forbidden("Forbidden");
+		}
+
+		UserEntity target = users.findByIdWithRoles(targetUserId)
+				.orElseThrow(() -> ApiErrors.notFound("User not found"));
+
+		// Prevent deleting last enabled ADMIN (same spirit as disable logic)
+		if (!target.isDisabled() && hasRole(target, UserRole.ADMIN)) {
+			if (users.countEnabledAdmins() <= 1) {
+				throw ApiErrors.badRequest("Cannot delete last enabled ADMIN");
+			}
+		}
+
+		// 1) sessions
+		refreshTokens.deleteAllForUser(targetUserId);
+
+		// 2) push devices
+		pushDevices.deleteAllForUser(targetUserId);
+
+		// 3) tasks: remove assignee or delete task if sole assignee
+		List<TaskAssigneeEntity> ass = taskAssignees.findAllByUserIdWithTask(targetUserId);
+		Map<UUID, List<TaskAssigneeEntity>> byTask = ass.stream()
+				.collect(Collectors.groupingBy(a -> a.getTask().getId()));
+
+		for (UUID taskId : byTask.keySet()) {
+			long cnt = taskAssignees.countAssignees(taskId);
+			if (cnt <= 1) {
+				// Hard delete task row
+				tasks.hardDeleteById(taskId);
+			} else {
+				// Remove only this user from assignees
+				taskAssignees.deleteOne(targetUserId, taskId);
+			}
+		}
+
+		// 4) attendance: delete rows and collect + delete linked attendance fines
+		List<UUID> attendanceFineIds = attendance.findFineIdsForUser(targetUserId);
+		attendance.hardDeleteAllForUser(targetUserId);
+
+		if (!attendanceFineIds.isEmpty()) {
+			fines.deleteAllById(attendanceFineIds);
+		}
+
+		// 5) fines: remove this user from fine_targets; then delete fines that have no targets left
+		fines.deleteTargetsForUser(targetUserId);
+		List<UUID> noTargetFineIds = fines.findFineIdsWithNoTargets();
+		if (!noTargetFineIds.isEmpty()) {
+			fines.deleteAllById(noTargetFineIds);
+		}
+
+		// 6) delete user (roles are orphanRemoval/cascade all in UserEntity)
+		users.delete(target);
+
+		// AUDIT
+		var d = audit.obj();
+		audit.put(d, "deletedUserId", targetUserId);
+		audit.put(d, "deletedUsername", target.getUsername());
+		audit.log(actor, "user.hardDelete", d);
 	}
 
 	// --------------------

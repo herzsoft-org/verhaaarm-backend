@@ -1,8 +1,8 @@
-// src/main/java/moe/herz/verhaarmbackend/attendance/AttendanceRepository.java
 package moe.herz.verhaarmbackend.attendance;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 import jakarta.persistence.LockModeType;
@@ -30,7 +30,6 @@ public interface AttendanceRepository extends JpaRepository<AttendanceEntity, UU
 	""")
 	Optional<AttendanceEntity> findVisibleByEventAndUser(UUID eventId, UUID userId);
 
-	// Includes soft-deleted rows (used to "revive" an exception instead of inserting a duplicate)
 	@Query("""
 		select a from AttendanceEntity a
 		where a.eventId = :eventId
@@ -38,13 +37,6 @@ public interface AttendanceRepository extends JpaRepository<AttendanceEntity, UU
 	""")
 	Optional<AttendanceEntity> findAnyByEventAndUser(UUID eventId, UUID userId);
 
-	/**
-	 * Used by AttendanceService.generateFines():
-	 * - Only visible (not deleted)
-	 * - Only rows without fine_id
-	 * - PESSIMISTIC_WRITE lock to prevent concurrent double-generation
-	 * - Only exception statuses (LATE/ABSENT) should ever be stored, but we still filter defensively.
-	 */
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	@Query("""
 		select a from AttendanceEntity a
@@ -60,12 +52,20 @@ public interface AttendanceRepository extends JpaRepository<AttendanceEntity, UU
 
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	@Query("""
-  select a from AttendanceEntity a
-  where a.eventId = :eventId
-    and a.deletedAt is null
-""")
+	  select a from AttendanceEntity a
+	  where a.eventId = :eventId
+	    and a.deletedAt is null
+	""")
 	List<AttendanceEntity> findVisibleByEventForUpdate(@Param("eventId") UUID eventId);
 
+	@Query("""
+		select distinct a.fineId from AttendanceEntity a
+		where a.userId = :userId
+		  and a.fineId is not null
+	""")
+	List<UUID> findFineIdsForUser(@Param("userId") UUID userId);
 
-
+	@Modifying
+	@Query("delete from AttendanceEntity a where a.userId = :userId")
+	int hardDeleteAllForUser(@Param("userId") UUID userId);
 }

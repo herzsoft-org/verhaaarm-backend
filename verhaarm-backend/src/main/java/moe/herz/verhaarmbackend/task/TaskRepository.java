@@ -34,6 +34,10 @@ public interface TaskRepository extends JpaRepository<TaskEntity, UUID> {
 	""")
 	List<TaskEntity> findAllVisibleWithAssignees();
 
+	@org.springframework.data.jpa.repository.Modifying
+	@Query("delete from TaskEntity t where t.id = :taskId")
+	int hardDeleteById(@Param("taskId") UUID taskId);
+
 	@Query("""
 		select distinct t
 		from TaskEntity t

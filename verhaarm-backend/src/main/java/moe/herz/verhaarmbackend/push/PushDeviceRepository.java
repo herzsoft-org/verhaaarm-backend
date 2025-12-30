@@ -1,6 +1,7 @@
 package moe.herz.verhaarmbackend.push;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -29,4 +30,8 @@ public interface PushDeviceRepository extends JpaRepository<PushDeviceEntity, UU
 		  and d.fcmToken = :token
 	""")
 	Optional<PushDeviceEntity> findFcmByToken(@Param("token") String token);
+
+	@Modifying
+	@Query("delete from PushDeviceEntity d where d.userId = :userId")
+	int deleteAllForUser(@Param("userId") UUID userId);
 }

@@ -1,6 +1,7 @@
 package moe.herz.verhaarmbackend.fine;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -86,4 +87,20 @@ public interface FineRepository extends JpaRepository<FineEntity, UUID> {
 			@Param("fromDate") LocalDate fromDate,
 			@Param("toDate") LocalDate toDate
 	);
+
+	// --------------------
+	// HARD DELETE HELPERS
+	// --------------------
+
+	@Modifying
+	@Query(value = "delete from fine_targets where user_id = :userId", nativeQuery = true)
+	int deleteTargetsForUser(@Param("userId") UUID userId);
+
+	@Query(value = """
+		select f.id
+		from fines f
+		left join fine_targets t on t.fine_id = f.id
+		where t.fine_id is null
+	""", nativeQuery = true)
+	List<UUID> findFineIdsWithNoTargets();
 }
