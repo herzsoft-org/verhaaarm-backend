@@ -5,6 +5,7 @@ import moe.herz.verhaarmbackend.push.PushService;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -34,18 +35,21 @@ public class NotificationService {
 		return notifications.countUnread(actor.getId());
 	}
 
+	@Transactional
 	public void markRead(UUID notificationId, UserEntity actor) {
 		if (actor == null) throw ApiErrors.forbidden("Forbidden");
 		int n = notifications.markRead(actor.getId(), notificationId);
 		if (n == 0) throw ApiErrors.notFound("Notification not found");
 	}
 
+	@Transactional
 	public void deleteOne(UUID notificationId, UserEntity actor) {
 		if (actor == null) throw ApiErrors.forbidden("Forbidden");
 		int n = notifications.softDeleteOneForUser(actor.getId(), notificationId);
 		if (n == 0) throw ApiErrors.notFound("Notification not found");
 	}
 
+	@Transactional
 	public int deleteAll(UserEntity actor) {
 		if (actor == null) throw ApiErrors.forbidden("Forbidden");
 		return notifications.softDeleteAllForUser(actor.getId());
@@ -54,7 +58,14 @@ public class NotificationService {
 	/**
 	 * Create a persistent notification and schedule push send AFTER COMMIT.
 	 */
-	public NotificationEntity createForUser(UUID userId, NotificationType type, String title, String body, Map<String, Object> data) {
+	@Transactional
+	public NotificationEntity createForUser(
+			UUID userId,
+			NotificationType type,
+			String title,
+			String body,
+			Map<String, Object> data
+	) {
 		if (userId == null) throw ApiErrors.badRequest("userId required");
 		if (type == null) throw ApiErrors.badRequest("type required");
 
@@ -63,7 +74,15 @@ public class NotificationService {
 		if (t.isBlank()) t = "Notification";
 		if (b.isBlank()) b = "";
 
-		NotificationEntity n = new NotificationEntity(UUID.randomUUID(), userId, type, t, b, data);
+		NotificationEntity n = new NotificationEntity(
+				UUID.randomUUID(),
+				userId,
+				type,
+				t,
+				b,
+				data
+		);
+
 		notifications.save(n);
 
 		// Send push only after DB commit succeeded
@@ -75,7 +94,7 @@ public class NotificationService {
 				}
 			});
 		} else {
-			// no tx -> send immediately
+			// no tx -> send immediately (should not normally happen)
 			push.sendForNotification(n);
 		}
 
