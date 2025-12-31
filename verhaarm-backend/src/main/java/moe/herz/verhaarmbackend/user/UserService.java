@@ -22,6 +22,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import java.time.LocalDate;
+import java.time.ZoneId;
 
 @Service
 public class UserService {
@@ -39,6 +41,9 @@ public class UserService {
 	private final TaskAssigneeRepository taskAssignees;
 	private final AttendanceRepository attendance;
 	private final UserRoleRepository userRoles;
+
+	private static final ZoneId ZONE_BERLIN = ZoneId.of("Europe/Berlin");
+
 
 	public UserService(
 			UserRepository users,
@@ -122,8 +127,9 @@ public class UserService {
 
 		UUID periodId = periodIdOrNull;
 		if (periodId == null) {
-			periodId = periods.findActive()
-					.orElseThrow(() -> ApiErrors.notFound("No active period"))
+			LocalDate today = LocalDate.now(ZONE_BERLIN);
+			periodId = periods.findCovering(today)
+					.orElseThrow(() -> ApiErrors.notFound("No active period for today"))
 					.getId();
 		}
 

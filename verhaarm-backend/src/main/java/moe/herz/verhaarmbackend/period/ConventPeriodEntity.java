@@ -2,6 +2,7 @@ package moe.herz.verhaarmbackend.period;
 
 import jakarta.persistence.*;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -17,14 +18,11 @@ public class ConventPeriodEntity {
 	@Column(nullable = false)
 	private String semester;
 
-	@Column(name = "start_at", nullable = false)
-	private OffsetDateTime startAt;
+	@Column(name = "start_date", nullable = false)
+	private LocalDate startAt;
 
-	@Column(name = "end_at", nullable = false)
-	private OffsetDateTime endAt;
-
-	@Column(nullable = false)
-	private boolean active;
+	@Column(name = "end_date", nullable = false)
+	private LocalDate endAt;
 
 	@Column(nullable = false)
 	private boolean locked;
@@ -39,27 +37,24 @@ public class ConventPeriodEntity {
 		// JPA
 	}
 
-	public ConventPeriodEntity(UUID id, String semester, OffsetDateTime startAt, OffsetDateTime endAt, boolean active, boolean locked) {
+	public ConventPeriodEntity(UUID id, String semester, LocalDate startAt, LocalDate endAt, boolean locked) {
 		this.id = id;
 		this.semester = semester;
 		this.startAt = startAt;
 		this.endAt = endAt;
-		this.active = active;
 		this.locked = locked;
 	}
 
 	public UUID getId() { return id; }
 	public String getSemester() { return semester; }
-	public OffsetDateTime getStartAt() { return startAt; }
-	public OffsetDateTime getEndAt() { return endAt; }
-	public boolean isActive() { return active; }
+	public LocalDate getStartAt() { return startAt; }
+	public LocalDate getEndAt() { return endAt; }
 	public boolean isLocked() { return locked; }
 	public OffsetDateTime getCreatedAt() { return createdAt; }
 	public OffsetDateTime getUpdatedAt() { return updatedAt; }
 
 	public void setSemester(String semester) { this.semester = semester; }
-	public void setStartAt(OffsetDateTime startAt) { this.startAt = startAt; }
-	public void setEndAt(OffsetDateTime endAt) { this.endAt = endAt; }
-	public void setActive(boolean active) { this.active = active; }
+	public void setStartAt(LocalDate startAt) { this.startAt = startAt; }
+	public void setEndAt(LocalDate endAt) { this.endAt = endAt; }
 	public void setLocked(boolean locked) { this.locked = locked; }
 }

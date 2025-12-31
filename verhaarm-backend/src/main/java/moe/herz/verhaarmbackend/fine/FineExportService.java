@@ -14,6 +14,7 @@ import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -22,6 +23,7 @@ import java.util.stream.Collectors;
 public class FineExportService {
 
 	private static final DateTimeFormatter TS = DateTimeFormatter.ISO_OFFSET_DATE_TIME;
+	private static final ZoneId ZONE_BERLIN = ZoneId.of("Europe/Berlin");
 
 	private final FineRepository fines;
 	private final ConventPeriodRepository periods;
@@ -39,14 +41,14 @@ public class FineExportService {
 
 		ConventPeriodEntity period = resolvePeriod(periodIdOrNull);
 
-		LocalDate fromDate = period.getStartAt().toLocalDate();
-		LocalDate toDate = period.getEndAt().toLocalDate();
+		// Periods are date-only now
+		LocalDate fromDate = period.getStartAt();
+		LocalDate toDate = period.getEndAt();
 
 		List<FineEntity> rows = includeDeleted
 				? fines.findAllIncludingDeletedInDateRangeWithTargets(fromDate, toDate)
 				: fines.findVisibleInDateRangeWithTargets(fromDate, toDate);
 
-		// collect all user ids referenced by export (creator + targets)
 		Set<UUID> userIds = new HashSet<>();
 		for (FineEntity f : rows) {
 			userIds.add(f.getCreatorUserId());
@@ -58,10 +60,8 @@ public class FineExportService {
 
 		StringBuilder sb = new StringBuilder(64 * 1024);
 
-		// UTF-8 BOM for Excel (DE)
-		sb.append('\uFEFF');
+		sb.append('\uFEFF'); // UTF-8 BOM for Excel
 
-		// Header
 		sb.append("semester;periodId;fineId;fineDate;createdAt;deletedAt;creatorUsername;creatorDisplayName;type;amount;reason;targetUsernames;targetDisplayNames;suggesterUserId;acceptedFromSuggestionId")
 				.append("\r\n");
 
@@ -110,7 +110,8 @@ public class FineExportService {
 		if (periodIdOrNull != null) {
 			return periods.findById(periodIdOrNull).orElseThrow(() -> ApiErrors.badRequest("Period not found"));
 		}
-		return periods.findActive().orElseThrow(() -> ApiErrors.notFound("No active period"));
+		LocalDate today = LocalDate.now(ZONE_BERLIN);
+		return periods.findCovering(today).orElseThrow(() -> ApiErrors.notFound("No active period for today"));
 	}
 
 	private static void requireExportRole(UserEntity actor) {
@@ -128,7 +129,6 @@ public class FineExportService {
 	}
 
 	private static String formatEuro(int cents) {
-		// "1,50" (comma decimal) - no currency symbol
 		BigDecimal eur = BigDecimal.valueOf(cents).divide(BigDecimal.valueOf(100), 2, RoundingMode.UNNECESSARY);
 		String s = eur.toPlainString();
 		return s.replace('.', ',');

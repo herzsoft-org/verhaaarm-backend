@@ -1,19 +1,15 @@
 package moe.herz.verhaarmbackend.period;
 
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.time.OffsetDateTime;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 public interface ConventPeriodRepository extends JpaRepository<ConventPeriodEntity, UUID> {
-
-	@Query("select p from ConventPeriodEntity p where p.active = true")
-	Optional<ConventPeriodEntity> findActive();
 
 	@Query("""
 		select p from ConventPeriodEntity p
@@ -22,23 +18,25 @@ public interface ConventPeriodRepository extends JpaRepository<ConventPeriodEnti
 	List<ConventPeriodEntity> findAllOrdered();
 
 	/**
-	 * Find the period that covers the given timestamp.
-	 * Coverage rule: start_at <= ts < end_at
+	 * Find the "active" period for a given date (inclusive).
+	 * Rule:
+	 *   start_date <= d <= end_date
+	 * Tie-breaker on overlap:
+	 *   pick the one that started earlier (smallest start_date).
 	 */
 	@Query("""
 		select p from ConventPeriodEntity p
-		where p.startAt <= :ts
-		  and p.endAt > :ts
-		order by p.startAt desc
+		where p.startAt <= :d
+		  and p.endAt >= :d
+		order by p.startAt asc, p.endAt asc
 	""")
-	Optional<ConventPeriodEntity> findCovering(@Param("ts") OffsetDateTime ts);
+	List<ConventPeriodEntity> findAllCoveringDateOrderEarlierStart(@Param("d") LocalDate d);
 
-	@Modifying(clearAutomatically = true, flushAutomatically = true)
-	@Query("""
-		update ConventPeriodEntity p
-		set p.active = false
-		where p.active = true
-		  and p.id <> :id
-	""")
-	int deactivateAllExcept(@Param("id") UUID id);
+	/**
+	 * For frontend date matching if you still want a "covering" query.
+	 */
+	default Optional<ConventPeriodEntity> findCovering(LocalDate d) {
+		var list = findAllCoveringDateOrderEarlierStart(d);
+		return list.isEmpty() ? Optional.empty() : Optional.of(list.getFirst());
+	}
 }

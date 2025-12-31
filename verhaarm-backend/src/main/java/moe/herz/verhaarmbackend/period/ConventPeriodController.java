@@ -1,9 +1,9 @@
 package moe.herz.verhaarmbackend.period;
 
+import jakarta.validation.Valid;
 import moe.herz.verhaarmbackend.period.dto.ConventPeriodDto;
 import moe.herz.verhaarmbackend.period.dto.CreateConventPeriodRequest;
 import moe.herz.verhaarmbackend.period.dto.UpdateConventPeriodRequest;
-import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -20,7 +20,6 @@ public class ConventPeriodController {
 		this.periods = periods;
 	}
 
-	// Any authenticated user can view periods
 	@GetMapping
 	public List<ConventPeriodDto> listAll() {
 		return periods.listAll();
@@ -36,35 +35,31 @@ public class ConventPeriodController {
 		return periods.getActive();
 	}
 
-	// ADMIN only: create periods
 	@PostMapping
 	@PreAuthorize("hasRole('ADMIN')")
 	public ConventPeriodDto create(@RequestBody @Valid CreateConventPeriodRequest req) {
 		return periods.create(req);
 	}
 
-	// ADMIN or SENIOR: edit periods
 	@PatchMapping("/{id}")
 	@PreAuthorize("hasRole('ADMIN') or hasRole('SENIOR')")
 	public ConventPeriodDto update(@PathVariable UUID id, @RequestBody UpdateConventPeriodRequest req) {
 		return periods.update(id, req);
 	}
 
-	// ADMIN or SENIOR: activate one period (deactivates previous active)
+	// kept for compatibility, but it will now return 400 with an explicit message
 	@PostMapping("/{id}/activate")
 	@PreAuthorize("hasRole('ADMIN') or hasRole('SENIOR')")
 	public ConventPeriodDto activate(@PathVariable UUID id) {
 		return periods.activate(id);
 	}
 
-	// ADMIN or SENIOR: lock a (non-active) period
 	@PostMapping("/{id}/lock")
 	@PreAuthorize("hasRole('ADMIN') or hasRole('SENIOR')")
 	public ConventPeriodDto lock(@PathVariable UUID id) {
 		return periods.lock(id);
 	}
 
-	// ADMIN or SENIOR: DELETE a (non-active) period
 	@DeleteMapping("/{id}")
 	@PreAuthorize("hasRole('ADMIN') or hasRole('SENIOR')")
 	public void delete(@PathVariable UUID id) {

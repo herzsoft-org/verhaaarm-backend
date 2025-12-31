@@ -28,7 +28,6 @@ public class TaskController {
 		this.userRepo = userRepo;
 	}
 
-	// ---- My tasks (assigned to me)
 	@GetMapping("/tasks")
 	@PreAuthorize("isAuthenticated()")
 	public List<TaskDto> myTasks(Authentication auth) {
@@ -37,7 +36,6 @@ public class TaskController {
 		return tasks.listMyTasks(actor);
 	}
 
-	// ---- Admin: all tasks (frontend groups by assignee)
 	@GetMapping("/admin/tasks")
 	@PreAuthorize("hasRole('ADMIN')")
 	public List<TaskDto> allTasks(Authentication auth) {
@@ -74,7 +72,6 @@ public class TaskController {
 		return ResponseEntity.noContent().build();
 	}
 
-	// Deletes all globally-solved tasks that are assigned to me (global deletion!)
 	@DeleteMapping("/tasks/solved")
 	@PreAuthorize("isAuthenticated()")
 	public ResponseEntity<Void> deleteAllSolvedAssignedToMe(Authentication auth) {
@@ -86,7 +83,6 @@ public class TaskController {
 
 	private UserEntity resolveActor(Authentication auth) {
 		if (auth == null || auth.getName() == null || auth.getName().isBlank()) return null;
-		// JwtAuthFilter sets auth principal to username
 		return userRepo.findByUsername(auth.getName()).orElse(null);
 	}
 }

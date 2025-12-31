@@ -8,7 +8,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.OffsetDateTime;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -18,6 +19,7 @@ import java.util.regex.Pattern;
 public class ConventPeriodService {
 
 	private static final Pattern SEMESTER_PATTERN = Pattern.compile("^(WS\\d{2}/\\d{2}|SS\\d{2})$");
+	private static final ZoneId ZONE_BERLIN = ZoneId.of("Europe/Berlin");
 
 	private final ConventPeriodRepository periods;
 
@@ -38,7 +40,8 @@ public class ConventPeriodService {
 
 	@Transactional(readOnly = true)
 	public ConventPeriodDto getActive() {
-		var p = periods.findActive().orElseThrow(() -> ApiErrors.notFound("No active period"));
+		LocalDate today = LocalDate.now(ZONE_BERLIN);
+		var p = periods.findCovering(today).orElseThrow(() -> ApiErrors.notFound("No active period for today"));
 		return toDto(p);
 	}
 
@@ -52,7 +55,6 @@ public class ConventPeriodService {
 				semester,
 				req.startAt(),
 				req.endAt(),
-				false,
 				false
 		);
 
@@ -69,60 +71,35 @@ public class ConventPeriodService {
 			p.setSemester(semester);
 		}
 
-		OffsetDateTime startAt = req.startAt() != null ? req.startAt() : p.getStartAt();
-		OffsetDateTime endAt = req.endAt() != null ? req.endAt() : p.getEndAt();
+		LocalDate startAt = req.startAt() != null ? req.startAt() : p.getStartAt();
+		LocalDate endAt = req.endAt() != null ? req.endAt() : p.getEndAt();
 		validateDates(startAt, endAt);
 
 		p.setStartAt(startAt);
 		p.setEndAt(endAt);
 
 		if (req.locked() != null) {
-			if (req.locked() && p.isActive()) {
-				throw ApiErrors.badRequest("Cannot lock the active period");
-			}
 			p.setLocked(req.locked());
-		}
-
-		if (req.active() != null) {
-			if (req.active()) {
-				activateInternal(p);
-			} else {
-				throw ApiErrors.badRequest("Exactly one active period must exist; activate another period instead");
-			}
 		}
 
 		try {
 			periods.save(p);
 		} catch (DataIntegrityViolationException e) {
-			throw ApiErrors.badRequest("Constraint violation (single active period or invalid data)");
+			throw ApiErrors.badRequest("Constraint violation (invalid data)");
 		}
 
 		return toDto(p);
 	}
 
+	// Active is automatic now; keep the endpoint but make it explicit.
 	@Transactional
 	public ConventPeriodDto activate(UUID id) {
-		var p = periods.findById(id).orElseThrow(() -> ApiErrors.notFound("Period not found"));
-
-		activateInternal(p);
-
-		try {
-			periods.save(p);
-		} catch (DataIntegrityViolationException e) {
-			throw ApiErrors.badRequest("Exactly one active period must exist");
-		}
-
-		return toDto(p);
+		throw ApiErrors.badRequest("Active period is determined automatically by current date; manual activation is disabled");
 	}
 
 	@Transactional
 	public ConventPeriodDto lock(UUID id) {
 		var p = periods.findById(id).orElseThrow(() -> ApiErrors.notFound("Period not found"));
-
-		if (p.isActive()) {
-			throw ApiErrors.badRequest("Cannot lock the active period");
-		}
-
 		p.setLocked(true);
 		periods.save(p);
 		return toDto(p);
@@ -132,30 +109,16 @@ public class ConventPeriodService {
 	public void delete(UUID id) {
 		var p = periods.findById(id).orElseThrow(() -> ApiErrors.notFound("Period not found"));
 
-		// keep your "exactly one active period" invariant
-		if (p.isActive()) {
-			throw ApiErrors.badRequest("Cannot delete the active period; activate another period first");
-		}
-
+		// Deletion is allowed; no "active" invariant anymore.
 		try {
 			periods.delete(p);
 			periods.flush();
 		} catch (DataIntegrityViolationException e) {
-			// If any FK still exists in DB (unexpected), this will catch it.
 			throw ApiErrors.badRequest("Cannot delete period due to existing references");
 		}
 	}
 
-	private void activateInternal(ConventPeriodEntity target) {
-		if (target.isLocked()) {
-			throw ApiErrors.badRequest("Cannot activate a locked period");
-		}
-
-		periods.deactivateAllExcept(target.getId());
-		target.setActive(true);
-	}
-
-	private static void validateDates(OffsetDateTime startAt, OffsetDateTime endAt) {
+	private static void validateDates(LocalDate startAt, LocalDate endAt) {
 		if (startAt == null || endAt == null) {
 			throw ApiErrors.badRequest("startAt and endAt are required");
 		}
@@ -183,8 +146,14 @@ public class ConventPeriodService {
 				p.getSemester(),
 				p.getStartAt(),
 				p.getEndAt(),
-				p.isActive(),
+				// active is computed: "true if it covers today"
+				isActiveToday(p),
 				p.isLocked()
 		);
+	}
+
+	private boolean isActiveToday(ConventPeriodEntity p) {
+		LocalDate today = LocalDate.now(ZONE_BERLIN);
+		return !p.getStartAt().isAfter(today) && !p.getEndAt().isBefore(today);
 	}
 }

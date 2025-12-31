@@ -20,7 +20,7 @@ public interface TaskRepository extends JpaRepository<TaskEntity, UUID> {
 		left join fetch a.user u
 		where t.deletedAt is null
 		  and filterA.user.id = :userId
-		order by t.solved asc, t.createdAt desc
+		order by t.solved asc, t.dueAt asc, t.createdAt desc
 	""")
 	List<TaskEntity> findVisibleForUser(@Param("userId") UUID userId);
 
@@ -34,7 +34,7 @@ public interface TaskRepository extends JpaRepository<TaskEntity, UUID> {
 	""")
 	List<TaskEntity> findAllVisibleWithAssignees();
 
-	@org.springframework.data.jpa.repository.Modifying
+	@Modifying
 	@Query("delete from TaskEntity t where t.id = :taskId")
 	int hardDeleteById(@Param("taskId") UUID taskId);
 
@@ -62,6 +62,7 @@ public interface TaskRepository extends JpaRepository<TaskEntity, UUID> {
 		set t.deletedAt = :now
 		where t.deletedAt is null
 		  and t.solved = true
+		  and t.recurringEnabled = false
 		  and t.id in (
 		    select a.task.id
 		    from TaskAssigneeEntity a
