@@ -38,6 +38,7 @@ public class UserService {
 	private final TaskRepository tasks;
 	private final TaskAssigneeRepository taskAssignees;
 	private final AttendanceRepository attendance;
+	private final UserRoleRepository userRoles;
 
 	public UserService(
 			UserRepository users,
@@ -49,7 +50,8 @@ public class UserService {
 			PushDeviceRepository pushDevices,
 			TaskRepository tasks,
 			TaskAssigneeRepository taskAssignees,
-			AttendanceRepository attendance
+			AttendanceRepository attendance,
+			UserRoleRepository userRoles
 	) {
 		this.users = users;
 		this.fines = fines;
@@ -62,7 +64,9 @@ public class UserService {
 		this.tasks = tasks;
 		this.taskAssignees = taskAssignees;
 		this.attendance = attendance;
+		this.userRoles = userRoles;
 	}
+
 
 	// --------------------
 	// READ
@@ -336,65 +340,61 @@ public class UserService {
 
 	@Transactional
 	public void hardDeleteUser(UUID targetUserId, UserEntity actor) {
-		if (actor == null || !users.hasRole(actor.getId(), UserRole.ADMIN)) {
+		if (actor == null || actor.getId() == null || !users.hasRole(actor.getId(), UserRole.ADMIN)) {
 			throw ApiErrors.forbidden("Forbidden");
 		}
+		if (targetUserId == null) throw ApiErrors.badRequest("User id required");
 
+		// Optional: prevent self delete (strongly recommended to avoid locking yourself out)
+		if (targetUserId.equals(actor.getId())) {
+			throw ApiErrors.badRequest("Cannot delete self");
+		}
+
+		// Load target (and roles for last-admin checks)
 		UserEntity target = users.findByIdWithRoles(targetUserId)
 				.orElseThrow(() -> ApiErrors.notFound("User not found"));
 
-		// Prevent deleting last enabled ADMIN (same spirit as disable logic)
-		if (!target.isDisabled() && hasRole(target, UserRole.ADMIN)) {
+		// Prevent deleting last enabled ADMIN
+		if (!target.isDisabled() && target.hasRole(UserRole.ADMIN)) {
 			if (users.countEnabledAdmins() <= 1) {
 				throw ApiErrors.badRequest("Cannot delete last enabled ADMIN");
 			}
 		}
 
-		// 1) sessions
+		// 1) Auth / push
 		refreshTokens.deleteAllForUser(targetUserId);
-
-		// 2) push devices
 		pushDevices.deleteAllForUser(targetUserId);
 
-		// 3) tasks: remove assignee or delete task if sole assignee
-		List<TaskAssigneeEntity> ass = taskAssignees.findAllByUserIdWithTask(targetUserId);
-		Map<UUID, List<TaskAssigneeEntity>> byTask = ass.stream()
-				.collect(Collectors.groupingBy(a -> a.getTask().getId()));
+		// 2) Attendance rows referencing the user
+		attendance.hardDeleteAllForUser(targetUserId);
 
-		for (UUID taskId : byTask.keySet()) {
-			long cnt = taskAssignees.countAssignees(taskId);
-			if (cnt <= 1) {
-				// Hard delete task row
+		// 3) Tasks: remove assignee links for this user; optionally delete tasks that become orphaned
+		List<TaskAssigneeEntity> links = taskAssignees.findAllByUserIdWithTask(targetUserId);
+		for (TaskAssigneeEntity link : links) {
+			UUID taskId = link.getTask().getId();
+
+			// remove this user's assignment
+			taskAssignees.deleteOne(targetUserId, taskId);
+
+			// if nobody is assigned anymore, hard delete the task (keeps DB consistent)
+			if (taskAssignees.countAssignees(taskId) == 0) {
+				taskAssignees.deleteAllForTask(taskId);
 				tasks.hardDeleteById(taskId);
-			} else {
-				// Remove only this user from assignees
-				taskAssignees.deleteOne(targetUserId, taskId);
 			}
 		}
 
-		// 4) attendance: delete rows and collect + delete linked attendance fines
-		List<UUID> attendanceFineIds = attendance.findFineIdsForUser(targetUserId);
-		attendance.hardDeleteAllForUser(targetUserId);
+		// 4) Roles: make sure user_roles is clean before deleting user row
+		userRoles.deleteAllForUser(targetUserId);
 
-		if (!attendanceFineIds.isEmpty()) {
-			fines.deleteAllById(attendanceFineIds);
-		}
-
-		// 5) fines: remove this user from fine_targets; then delete fines that have no targets left
-		fines.deleteTargetsForUser(targetUserId);
-		List<UUID> noTargetFineIds = fines.findFineIdsWithNoTargets();
-		if (!noTargetFineIds.isEmpty()) {
-			fines.deleteAllById(noTargetFineIds);
-		}
-
-		// 6) delete user (roles are orphanRemoval/cascade all in UserEntity)
-		users.delete(target);
+		// 5) Finally delete the user
+		users.deleteById(targetUserId);
 
 		// AUDIT
 		var d = audit.obj();
-		audit.put(d, "deletedUserId", targetUserId);
-		audit.put(d, "deletedUsername", target.getUsername());
-		audit.log(actor, "user.hardDelete", d);
+		audit.put(d, "targetUserId", targetUserId);
+		audit.put(d, "targetUsername", target.getUsername());
+		audit.put(d, "targetDisplayName", target.getDisplayName());
+		audit.log(actor, "user.hard_delete", d);
 	}
 
 	// --------------------
