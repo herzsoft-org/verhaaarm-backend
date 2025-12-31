@@ -44,7 +44,7 @@ public class TaskService {
 		this.notifications = notifications;
 	}
 
-	@Transactional(readOnly = true)
+	@Transactional
 	public List<TaskDto> listMyTasks(UserEntity actor) {
 		if (actor == null) throw ApiErrors.forbidden("Forbidden");
 
@@ -55,7 +55,7 @@ public class TaskService {
 		return list.stream().map(this::toDto).toList();
 	}
 
-	@Transactional(readOnly = true)
+	@Transactional
 	public List<TaskDto> listAllTasksAdmin(UserEntity actor) {
 		if (actor == null || !users.hasRole(actor.getId(), UserRole.ADMIN)) throw ApiErrors.forbidden("Forbidden");
 
