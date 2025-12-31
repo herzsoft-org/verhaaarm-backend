@@ -31,6 +31,7 @@ public class FinePhotoService {
 	private final FineRepository fines;
 	private final FinePhotoRepository photos;
 
+	/** Absolute + normalized base directory for all fine uploads. */
 	private final Path baseDir;
 
 	@PersistenceContext
@@ -43,7 +44,7 @@ public class FinePhotoService {
 	) {
 		this.fines = fines;
 		this.photos = photos;
-		this.baseDir = Paths.get(baseDir);
+		this.baseDir = Paths.get(baseDir).toAbsolutePath().normalize();
 	}
 
 	@Transactional(readOnly = true)
@@ -77,15 +78,19 @@ public class FinePhotoService {
 
 		String original = safeOriginalFilename(file.getOriginalFilename());
 		String ext = guessExtension(original, contentType);
-		String stored = UUID.randomUUID() + ext;
 
-		Path fineDir = baseDir.resolve(fineId.toString());
-		Path dest = fineDir.resolve(stored);
+		// stored filename is server-generated and later validated on read/delete
+		String stored = UUID.randomUUID() + ext;
+		stored = safeStoredFilename(stored);
+
+		Path fineDir = resolveFineDir(fineId);
+		Path dest = resolveInFineDir(fineDir, stored);
 
 		try {
 			Files.createDirectories(fineDir);
 
-			Path tmp = fineDir.resolve(stored + ".tmp");
+			String tmpName = safeStoredFilename(stored + ".tmp");
+			Path tmp = resolveInFineDir(fineDir, tmpName);
 
 			try (InputStream in = file.getInputStream()) {
 				Files.copy(in, tmp, REPLACE_EXISTING);
@@ -129,9 +134,11 @@ public class FinePhotoService {
 		FinePhotoEntity p = photos.findVisibleByIdAndFineId(photoId, fineId)
 				.orElseThrow(() -> ApiErrors.notFound("Photo not found"));
 
-		Path file = baseDir.resolve(fineId.toString()).resolve(p.getStoredFilename());
-		if (!Files.exists(file)) throw ApiErrors.notFound("File missing on disk");
+		Path fineDir = resolveFineDir(fineId);
+		String stored = safeStoredFilename(p.getStoredFilename());
+		Path file = resolveInFineDir(fineDir, stored);
 
+		if (!Files.exists(file)) throw ApiErrors.notFound("File missing on disk");
 		return new Download(new FileSystemResource(file), p.getOriginalFilename(), p.getContentType());
 	}
 
@@ -154,7 +161,9 @@ public class FinePhotoService {
 
 		// disk cleanup best-effort
 		try {
-			Path file = baseDir.resolve(fineId.toString()).resolve(p.getStoredFilename());
+			Path fineDir = resolveFineDir(fineId);
+			String stored = safeStoredFilename(p.getStoredFilename());
+			Path file = resolveInFineDir(fineDir, stored);
 			Files.deleteIfExists(file);
 		} catch (Exception ignored) {
 		}
@@ -169,7 +178,7 @@ public class FinePhotoService {
 	 */
 	@Transactional(readOnly = true)
 	public void deleteFineDirectoryBestEffort(UUID fineId) {
-		Path fineDir = baseDir.resolve(fineId.toString());
+		Path fineDir = resolveFineDir(fineId);
 		if (!Files.exists(fineDir)) return;
 
 		try {
@@ -260,5 +269,54 @@ public class FinePhotoService {
 		if (ct.equals("image/png")) return ".png";
 		if (ct.equals("image/webp")) return ".webp";
 		return "";
+	}
+
+	/**
+	 * Ensures the fine directory is inside baseDir after normalization.
+	 * This is the core path traversal mitigation for fineId-based resolution.
+	 */
+	private Path resolveFineDir(UUID fineId) {
+		Path dir = baseDir.resolve(fineId.toString()).normalize();
+		if (!dir.startsWith(baseDir)) {
+			throw ApiErrors.badRequest("Invalid fine id");
+		}
+		return dir;
+	}
+
+	/**
+	 * Ensures a filename is a simple leaf name we expect (no separators, no traversal)
+	 * and matches our server-generated format.
+	 */
+	private static String safeStoredFilename(String stored) {
+		if (stored == null) throw ApiErrors.badRequest("Invalid filename");
+
+		String s = stored.trim();
+		if (s.isEmpty()) throw ApiErrors.badRequest("Invalid filename");
+
+		// Reject any path separators (works for both Linux + Windows)
+		if (s.contains("/") || s.contains("\\") || s.contains("\0")) {
+			throw ApiErrors.badRequest("Invalid filename");
+		}
+
+		// Allow: <uuid>[.<ext>][.tmp] where ext is short and alnum
+		// Examples:
+		//   550e8400-e29b-41d4-a716-446655440000.jpg
+		//   550e8400-e29b-41d4-a716-446655440000.webp.tmp
+		if (!s.matches("(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\\.[a-z0-9]{1,8})?(\\.tmp)?$")) {
+			throw ApiErrors.badRequest("Invalid filename");
+		}
+
+		return s;
+	}
+
+	/**
+	 * Resolve a leaf filename inside a given fine directory and enforce containment.
+	 */
+	private static Path resolveInFineDir(Path fineDir, String leafName) {
+		Path p = fineDir.resolve(leafName).normalize();
+		if (!p.startsWith(fineDir)) {
+			throw ApiErrors.badRequest("Invalid path");
+		}
+		return p;
 	}
 }
