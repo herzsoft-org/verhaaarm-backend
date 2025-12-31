@@ -1,6 +1,7 @@
 package moe.herz.verhaarmbackend.event;
 
 import jakarta.validation.Valid;
+import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.event.dto.CreateEventRequest;
 import moe.herz.verhaarmbackend.event.dto.EventDto;
 import moe.herz.verhaarmbackend.event.dto.UpdateEventRequest;
@@ -55,8 +56,11 @@ public class EventController {
 	}
 
 	private UserEntity actor(Authentication auth) {
+		if (auth == null || auth.getName() == null || auth.getName().isBlank()) {
+			throw ApiErrors.unauthorized("Unauthorized");
+		}
 		String username = auth.getName();
 		return users.findByUsernameWithRoles(username)
-				.orElseThrow(() -> moe.herz.verhaarmbackend.common.ApiErrors.unauthorized("Unauthorized"));
+				.orElseThrow(() -> ApiErrors.unauthorized("Unauthorized"));
 	}
 }

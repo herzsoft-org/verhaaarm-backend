@@ -92,6 +92,21 @@ public class GlobalExceptionHandler {
 		));
 	}
 
+	// IMPORTANT: without this, controllers throwing IllegalArgumentException can become a 500.
+	@ExceptionHandler(IllegalArgumentException.class)
+	public ResponseEntity<?> handleIllegalArgument(IllegalArgumentException ex) {
+		if (debugErrors) {
+			return ResponseEntity.badRequest().body(Map.of(
+					"error", "Bad Request",
+					"details", ex.getClass().getSimpleName() + ": " + ex.getMessage()
+			));
+		}
+		return ResponseEntity.badRequest().body(Map.of(
+				"error", "Bad Request",
+				"details", "Bad Request"
+		));
+	}
+
 	@ExceptionHandler(DataIntegrityViolationException.class)
 	public ResponseEntity<?> handleDataIntegrity(DataIntegrityViolationException ex) {
 		if (debugErrors) {
