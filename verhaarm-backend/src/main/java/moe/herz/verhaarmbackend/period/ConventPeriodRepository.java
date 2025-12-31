@@ -18,11 +18,8 @@ public interface ConventPeriodRepository extends JpaRepository<ConventPeriodEnti
 	List<ConventPeriodEntity> findAllOrdered();
 
 	/**
-	 * Find the "active" period for a given date (inclusive).
-	 * Rule:
-	 *   start_date <= d <= end_date
-	 * Tie-breaker on overlap:
-	 *   pick the one that started earlier (smallest start_date).
+	 * Find all periods covering a given date (inclusive) ordered by earliest start/end.
+	 * startAt <= d <= endAt
 	 */
 	@Query("""
 		select p from ConventPeriodEntity p
@@ -33,10 +30,9 @@ public interface ConventPeriodRepository extends JpaRepository<ConventPeriodEnti
 	List<ConventPeriodEntity> findAllCoveringDateOrderEarlierStart(@Param("d") LocalDate d);
 
 	/**
-	 * For frontend date matching if you still want a "covering" query.
+	 * Convenience: the single "active" period for a date (first by the ordering above).
 	 */
 	default Optional<ConventPeriodEntity> findCovering(LocalDate d) {
-		var list = findAllCoveringDateOrderEarlierStart(d);
-		return list.isEmpty() ? Optional.empty() : Optional.of(list.getFirst());
+		return findAllCoveringDateOrderEarlierStart(d).stream().findFirst();
 	}
 }
