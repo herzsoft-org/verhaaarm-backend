@@ -122,8 +122,9 @@ public class ConventPeriodService {
 		if (startAt == null || endAt == null) {
 			throw ApiErrors.badRequest("startAt and endAt are required");
 		}
-		if (!startAt.isBefore(endAt)) {
-			throw ApiErrors.badRequest("startAt must be before endAt");
+		// Inclusive end date semantics => allow startAt == endAt (one-day period)
+		if (startAt.isAfter(endAt)) {
+			throw ApiErrors.badRequest("startAt must be on or before endAt");
 		}
 	}
 
@@ -154,6 +155,7 @@ public class ConventPeriodService {
 
 	private boolean isActiveToday(ConventPeriodEntity p) {
 		LocalDate today = LocalDate.now(ZONE_BERLIN);
+		// inclusive: startAt <= today <= endAt
 		return !p.getStartAt().isAfter(today) && !p.getEndAt().isBefore(today);
 	}
 }

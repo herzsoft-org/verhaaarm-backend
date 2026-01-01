@@ -51,7 +51,7 @@ public interface FineRepository extends JpaRepository<FineEntity, UUID> {
     where f.deleted_at is null
       and t.user_id = :targetUserId
       and f.fine_date >= p.start_date
-      and f.fine_date <  p.end_date
+      and f.fine_date <= p.end_date
 """, nativeQuery = true)
 	long sumVisibleAmountCentsForTargetInPeriod(
 			@Param("targetUserId") UUID targetUserId,
