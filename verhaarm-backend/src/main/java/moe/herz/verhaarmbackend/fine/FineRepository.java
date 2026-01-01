@@ -50,8 +50,8 @@ public interface FineRepository extends JpaRepository<FineEntity, UUID> {
     join convent_periods p on p.id = :periodId
     where f.deleted_at is null
       and t.user_id = :targetUserId
-      and f.fine_date >= (p.start_at at time zone 'Europe/Berlin')::date
-      and f.fine_date <  (p.end_at   at time zone 'Europe/Berlin')::date
+      and f.fine_date >= p.start_date
+      and f.fine_date <  p.end_date
 """, nativeQuery = true)
 	long sumVisibleAmountCentsForTargetInPeriod(
 			@Param("targetUserId") UUID targetUserId,
