@@ -89,12 +89,8 @@ public class PushService {
 	}
 
 	/**
-	 * Send push for a stored notification.
-	 *
-	 * Fixes:
-	 * - WEBPUSH: keep sending one JSON payload (fine for browsers)
-	 * - FCM (Android): send DATA-ONLY with TOP-LEVEL KEYS (type, fineId/taskId, title/body, etc.)
-	 *   so Flutter can route on RemoteMessage.data directly.
+	 * Option A: WEBPUSH sends one JSON payload; FCM sends notification+data.
+	 * Flutter routes based on RemoteMessage.data (fineId/taskId/type etc.).
 	 */
 	public void sendForNotification(NotificationEntity n) {
 		if (!cfg.isEnabled()) {
@@ -108,7 +104,7 @@ public class PushService {
 			return;
 		}
 
-		// Build WEBPUSH JSON payload (unchanged behavior)
+		// WEBPUSH JSON payload
 		String webPushPayload;
 		try {
 			webPushPayload = om.writeValueAsString(Map.of(
@@ -123,18 +119,16 @@ public class PushService {
 			return;
 		}
 
-		// Build FCM flat data map (critical fix)
+		// FCM flat data map (for routing)
 		Map<String, String> fcmData;
 		try {
 			var m = new HashMap<String, String>();
 
-			// Base fields (Flutter reads these)
 			m.put("notificationId", n.getId().toString());
 			m.put("type", n.getType().name());
 			m.put("title", n.getTitle() == null ? "" : n.getTitle());
 			m.put("body", n.getBody() == null ? "" : n.getBody());
 
-			// Flatten NotificationEntity.data into top-level keys (fineId/taskId should live here)
 			if (n.getData() != null) {
 				for (var e : n.getData().entrySet()) {
 					if (e.getKey() == null || e.getKey().isBlank()) continue;
@@ -160,9 +154,6 @@ public class PushService {
 
 				} else if (d.getKind() == PushDeviceKind.FCM) {
 					if (d.getFcmToken() == null) continue;
-
-					// IMPORTANT: FcmSender must send DATA-ONLY and put each key via putData(k,v)
-					// (i.e. do NOT set Notification payload in FCM)
 					fcm.send(d.getFcmToken(), fcmData);
 				}
 			} catch (Exception ex) {
