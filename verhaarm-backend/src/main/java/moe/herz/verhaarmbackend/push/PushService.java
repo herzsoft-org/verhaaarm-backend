@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -23,7 +24,9 @@ public class PushService {
 	private final PushConfigProperties cfg;
 	private final WebPushSender webPush;
 	private final FcmSender fcm;
+
 	private final ObjectMapper om = new ObjectMapper();
+	private static final Logger log = LoggerFactory.getLogger(PushService.class);
 
 	public PushService(PushDeviceRepository devices, PushConfigProperties cfg, WebPushSender webPush, FcmSender fcm) {
 		this.devices = devices;
@@ -85,8 +88,14 @@ public class PushService {
 		devices.save(d);
 	}
 
-	private static final Logger log = LoggerFactory.getLogger(PushService.class);
-
+	/**
+	 * Send push for a stored notification.
+	 *
+	 * Fixes:
+	 * - WEBPUSH: keep sending one JSON payload (fine for browsers)
+	 * - FCM (Android): send DATA-ONLY with TOP-LEVEL KEYS (type, fineId/taskId, title/body, etc.)
+	 *   so Flutter can route on RemoteMessage.data directly.
+	 */
 	public void sendForNotification(NotificationEntity n) {
 		if (!cfg.isEnabled()) {
 			log.debug("Push disabled; skip notificationId={} userId={}", n.getId(), n.getUserId());
@@ -99,9 +108,10 @@ public class PushService {
 			return;
 		}
 
-		String payload;
+		// Build WEBPUSH JSON payload (unchanged behavior)
+		String webPushPayload;
 		try {
-			payload = om.writeValueAsString(Map.of(
+			webPushPayload = om.writeValueAsString(Map.of(
 					"notificationId", n.getId().toString(),
 					"type", n.getType().name(),
 					"title", n.getTitle(),
@@ -109,7 +119,34 @@ public class PushService {
 					"data", n.getData()
 			));
 		} catch (Exception e) {
-			log.warn("Push payload build failed notificationId={} userId={}", n.getId(), n.getUserId(), e);
+			log.warn("WebPush payload build failed notificationId={} userId={}", n.getId(), n.getUserId(), e);
+			return;
+		}
+
+		// Build FCM flat data map (critical fix)
+		Map<String, String> fcmData;
+		try {
+			var m = new HashMap<String, String>();
+
+			// Base fields (Flutter reads these)
+			m.put("notificationId", n.getId().toString());
+			m.put("type", n.getType().name());
+			m.put("title", n.getTitle() == null ? "" : n.getTitle());
+			m.put("body", n.getBody() == null ? "" : n.getBody());
+
+			// Flatten NotificationEntity.data into top-level keys (fineId/taskId should live here)
+			if (n.getData() != null) {
+				for (var e : n.getData().entrySet()) {
+					if (e.getKey() == null || e.getKey().isBlank()) continue;
+					Object v = e.getValue();
+					if (v == null) continue;
+					m.put(e.getKey(), String.valueOf(v));
+				}
+			}
+
+			fcmData = Map.copyOf(m);
+		} catch (Exception e) {
+			log.warn("FCM payload build failed notificationId={} userId={}", n.getId(), n.getUserId(), e);
 			return;
 		}
 
@@ -119,10 +156,14 @@ public class PushService {
 			try {
 				if (d.getKind() == PushDeviceKind.WEBPUSH) {
 					if (d.getEndpoint() == null || d.getP256dh() == null || d.getAuth() == null) continue;
-					webPush.send(d.getEndpoint(), d.getP256dh(), d.getAuth(), payload);
+					webPush.send(d.getEndpoint(), d.getP256dh(), d.getAuth(), webPushPayload);
+
 				} else if (d.getKind() == PushDeviceKind.FCM) {
 					if (d.getFcmToken() == null) continue;
-					fcm.send(d.getFcmToken(), n.getTitle(), n.getBody(), payload);
+
+					// IMPORTANT: FcmSender must send DATA-ONLY and put each key via putData(k,v)
+					// (i.e. do NOT set Notification payload in FCM)
+					fcm.send(d.getFcmToken(), fcmData);
 				}
 			} catch (Exception ex) {
 				log.warn("Push send failed kind={} deviceId={} userId={} notificationId={}: {}",
