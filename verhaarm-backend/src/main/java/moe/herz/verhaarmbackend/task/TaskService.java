@@ -57,7 +57,7 @@ public class TaskService {
 
 	@Transactional
 	public List<TaskDto> listAllTasksAdmin(UserEntity actor) {
-		if (actor == null || !users.hasRole(actor.getId(), UserRole.ADMIN)) throw ApiErrors.forbidden("Forbidden");
+		if (!canManageAllTasks(actor)) throw ApiErrors.forbidden("Forbidden");
 
 		List<TaskEntity> list = tasks.findAllVisibleWithAssignees();
 		reopenRecurringIfNeeded(list);
@@ -157,9 +157,9 @@ public class TaskService {
 		TaskEntity t = tasks.findVisibleByIdWithAssignees(taskId)
 				.orElseThrow(() -> ApiErrors.notFound("Task not found"));
 
-		boolean isAdmin = users.hasRole(actor.getId(), UserRole.ADMIN);
+		boolean canManageAll = canManageAllTasks(actor);
 		boolean isCreator = t.getCreatorUserId() != null && t.getCreatorUserId().equals(actor.getId());
-		if (!isAdmin && !isCreator) throw ApiErrors.forbidden("Forbidden");
+		if (!canManageAll && !isCreator) throw ApiErrors.forbidden("Forbidden");
 
 		String beforeTitle = t.getTitle();
 		String beforeDescription = t.getDescription();
@@ -304,9 +304,9 @@ public class TaskService {
 		TaskEntity t = tasks.findVisibleByIdWithAssignees(taskId)
 				.orElseThrow(() -> ApiErrors.notFound("Task not found"));
 
-		boolean isAdmin = users.hasRole(actor.getId(), UserRole.ADMIN);
+		boolean canManageAll = canManageAllTasks(actor);
 		boolean isAssignee = tasks.isAssignee(taskId, actor.getId());
-		if (!isAdmin && !isAssignee) throw ApiErrors.forbidden("Forbidden");
+		if (!canManageAll && !isAssignee) throw ApiErrors.forbidden("Forbidden");
 
 		boolean beforeSolved = t.isSolved();
 		OffsetDateTime beforeSolvedAt = t.getSolvedAt();
@@ -340,9 +340,9 @@ public class TaskService {
 		TaskEntity t = tasks.findVisibleByIdWithAssignees(taskId)
 				.orElseThrow(() -> ApiErrors.notFound("Task not found"));
 
-		boolean isAdmin = users.hasRole(actor.getId(), UserRole.ADMIN);
+		boolean canManageAll = canManageAllTasks(actor);
 		boolean isAssignee = tasks.isAssignee(taskId, actor.getId());
-		if (!isAdmin && !isAssignee) throw ApiErrors.forbidden("Forbidden");
+		if (!canManageAll && !isAssignee) throw ApiErrors.forbidden("Forbidden");
 
 		// Weekly recurring tasks: hard delete as requested
 		if (t.isRecurringEnabled()) {
@@ -372,6 +372,14 @@ public class TaskService {
 		audit.log(actor, "task.deleteSolvedForUser", d);
 
 		return n;
+	}
+
+	private boolean canManageAllTasks(UserEntity actor) {
+		return actor != null && (
+				users.hasRole(actor.getId(), UserRole.ADMIN)
+						|| users.hasRole(actor.getId(), UserRole.SENIOR)
+						|| users.hasRole(actor.getId(), UserRole.HOUSEKEEPING)
+		);
 	}
 
 	private void reopenRecurringIfNeeded(List<TaskEntity> list) {

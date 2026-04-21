@@ -37,7 +37,7 @@ public class TaskController {
 	}
 
 	@GetMapping("/admin/tasks")
-	@PreAuthorize("hasRole('ADMIN')")
+	@PreAuthorize("hasAnyRole('ADMIN', 'SENIOR', 'HOUSEKEEPING')")
 	public List<TaskDto> allTasks(Authentication auth) {
 		UserEntity actor = resolveActor(auth);
 		return tasks.listAllTasksAdmin(actor);
