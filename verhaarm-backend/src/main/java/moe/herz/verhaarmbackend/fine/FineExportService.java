@@ -55,7 +55,7 @@ public class FineExportService {
 			userIds.addAll(f.getTargetUserIds());
 		}
 
-		Map<UUID, UserEntity> userById = users.findAllById(userIds).stream()
+		Map<UUID, UserEntity> userById = users.findAllEnabledByIdIn(userIds).stream()
 				.collect(Collectors.toMap(UserEntity::getId, u -> u));
 
 		StringBuilder sb = new StringBuilder(64 * 1024);
@@ -66,6 +66,10 @@ public class FineExportService {
 				.append("\r\n");
 
 		for (FineEntity f : rows) {
+			if (!canResolveAllTargetUsers(f, userById)) {
+				continue;
+			}
+
 			UserEntity creator = userById.get(f.getCreatorUserId());
 
 			List<UserEntity> targets = f.getTargetUserIds().stream()
@@ -132,6 +136,10 @@ public class FineExportService {
 		boolean mustQuote = v.contains(";") || v.contains("\"") || v.contains(",");
 		if (!mustQuote) return v;
 		return "\"" + v.replace("\"", "\"\"") + "\"";
+	}
+
+	private static boolean canResolveAllTargetUsers(FineEntity fine, Map<UUID, UserEntity> userById) {
+		return fine.getTargetUserIds().stream().allMatch(userById::containsKey);
 	}
 
 	public record ExportResult(String filename, byte[] bytes) {}

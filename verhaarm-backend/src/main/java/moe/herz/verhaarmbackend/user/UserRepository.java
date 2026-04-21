@@ -7,6 +7,7 @@ import org.springframework.data.repository.query.Param;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Collection;
 
 public interface UserRepository extends JpaRepository<UserEntity, UUID> {
 
@@ -77,4 +78,11 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
 	boolean existsByUsername(String username);
 
 	boolean existsByUsernameNormalized(String usernameNormalized);
+
+	@Query("""
+    select u from UserEntity u
+    where u.id in :ids
+      and u.disabled = false
+	""")
+	List<UserEntity> findAllEnabledByIdIn(@Param("ids") Collection<UUID> ids);
 }
