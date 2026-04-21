@@ -55,6 +55,7 @@ public class EventService {
 		if (startsAt.isBefore(OffsetDateTime.now())) throw ApiErrors.badRequest("Cannot schedule events in the past");
 
 		boolean mandatory = req.mandatory() != null && req.mandatory();
+		EventKind eventKind = req.eventKind() == null ? EventKind.MAIN : req.eventKind();
 
 		EventOwnerType ownerType = (hasRole(actor, UserRole.ADMIN) || hasRole(actor, UserRole.SENIOR))
 				? EventOwnerType.SENIOR
@@ -66,6 +67,7 @@ public class EventService {
 				title,
 				startsAt,
 				mandatory,
+				eventKind,
 				ownerType
 		);
 
@@ -83,6 +85,7 @@ public class EventService {
 		audit.put(d, "title", reloaded.getTitle());
 		audit.put(d, "startsAt", reloaded.getStartsAt() == null ? null : reloaded.getStartsAt().toString());
 		audit.put(d, "mandatory", reloaded.isMandatory());
+		audit.put(d, "eventKind", reloaded.getEventKind() == null ? null : reloaded.getEventKind().name());
 		audit.put(d, "ownerType", reloaded.getOwnerType() == null ? null : reloaded.getOwnerType().name());
 		audit.log(actor, "event.create", d);
 
@@ -111,6 +114,7 @@ public class EventService {
 		String beforeTitle = e.getTitle();
 		OffsetDateTime beforeStartsAt = e.getStartsAt();
 		boolean beforeMandatory = e.isMandatory();
+		EventKind beforeEventKind = e.getEventKind();
 
 		if (req.title() != null) {
 			String title = req.title().trim();
@@ -127,6 +131,10 @@ public class EventService {
 			e.setMandatory(req.mandatory());
 		}
 
+		if (req.eventKind() != null) {
+			e.setEventKind(req.eventKind());
+		}
+
 		events.save(e);
 
 		var d = audit.obj();
@@ -136,11 +144,13 @@ public class EventService {
 		audit.put(before, "title", beforeTitle);
 		audit.put(before, "startsAt", beforeStartsAt == null ? null : beforeStartsAt.toString());
 		audit.put(before, "mandatory", beforeMandatory);
+		audit.put(before, "eventKind", beforeEventKind == null ? null : beforeEventKind.name());
 
 		var after = audit.obj();
 		audit.put(after, "title", e.getTitle());
 		audit.put(after, "startsAt", e.getStartsAt() == null ? null : e.getStartsAt().toString());
 		audit.put(after, "mandatory", e.isMandatory());
+		audit.put(after, "eventKind", e.getEventKind() == null ? null : e.getEventKind().name());
 
 		d.set("before", before);
 		d.set("after", after);
@@ -172,26 +182,21 @@ public class EventService {
 		e.setDeletedAt(OffsetDateTime.now());
 		events.save(e);
 
-		// Also delete attendance exceptions + their linked fines for this event.
-
-		// 1) Collect fine IDs from ALL attendance rows (including already soft-deleted)
-				@SuppressWarnings("unchecked")
-				var fineIds = em.createNativeQuery("""
-				  select distinct fine_id
-				  from attendance
-				  where event_id = :eventId
-				    and fine_id is not null
+		@SuppressWarnings("unchecked")
+		var fineIds = em.createNativeQuery("""
+		  select distinct fine_id
+		  from attendance
+		  where event_id = :eventId
+		    and fine_id is not null
 		""").setParameter("eventId", id).getResultList();
 
-		// 2) Unlink fine_id on ALL attendance rows, and soft-delete them (idempotent)
-				em.createNativeQuery("""
-				  update attendance
-				  set fine_id = null,
-				      deleted_at = coalesce(deleted_at, now())
-				  where event_id = :eventId
+		em.createNativeQuery("""
+		  update attendance
+		  set fine_id = null,
+		      deleted_at = coalesce(deleted_at, now())
+		  where event_id = :eventId
 		""").setParameter("eventId", id).executeUpdate();
 
-		// 3) Hard-delete fines
 		if (fineIds != null && !fineIds.isEmpty()) {
 			for (Object o : fineIds) {
 				if (o == null) continue;
@@ -219,6 +224,7 @@ public class EventService {
 				e.getTitle(),
 				e.getStartsAt(),
 				e.isMandatory(),
+				e.getEventKind(),
 				e.getOwnerType(),
 				e.getCreatedAt()
 		);

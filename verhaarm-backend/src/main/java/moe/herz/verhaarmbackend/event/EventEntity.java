@@ -26,6 +26,10 @@ public class EventEntity {
 	private boolean mandatory;
 
 	@Enumerated(EnumType.STRING)
+	@Column(name = "event_kind", nullable = false)
+	private EventKind eventKind;
+
+	@Enumerated(EnumType.STRING)
 	@Column(name = "owner_type", nullable = false)
 	private EventOwnerType ownerType;
 
@@ -48,6 +52,7 @@ public class EventEntity {
 			String title,
 			OffsetDateTime startsAt,
 			boolean mandatory,
+			EventKind eventKind,
 			EventOwnerType ownerType
 	) {
 		this.id = id;
@@ -55,6 +60,7 @@ public class EventEntity {
 		this.title = title;
 		this.startsAt = startsAt;
 		this.mandatory = mandatory;
+		this.eventKind = eventKind;
 		this.ownerType = ownerType;
 	}
 
@@ -63,6 +69,7 @@ public class EventEntity {
 	public String getTitle() { return title; }
 	public OffsetDateTime getStartsAt() { return startsAt; }
 	public boolean isMandatory() { return mandatory; }
+	public EventKind getEventKind() { return eventKind; }
 	public EventOwnerType getOwnerType() { return ownerType; }
 	public OffsetDateTime getDeletedAt() { return deletedAt; }
 	public OffsetDateTime getCreatedAt() { return createdAt; }
@@ -71,6 +78,7 @@ public class EventEntity {
 	public void setTitle(String title) { this.title = title; }
 	public void setStartsAt(OffsetDateTime startsAt) { this.startsAt = startsAt; }
 	public void setMandatory(boolean mandatory) { this.mandatory = mandatory; }
+	public void setEventKind(EventKind eventKind) { this.eventKind = eventKind; }
 	public void setOwnerType(EventOwnerType ownerType) { this.ownerType = ownerType; }
 	public void setDeletedAt(OffsetDateTime deletedAt) { this.deletedAt = deletedAt; }
 
