@@ -13,7 +13,6 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
-import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -41,17 +40,18 @@ public class FineExportService {
 
 		ConventPeriodEntity period = resolvePeriod(periodIdOrNull);
 
-		// Periods are date-only now
 		LocalDate fromDate = period.getStartAt();
-		LocalDate toDate = period.getEndAt();
+		LocalDate toDateExclusive = period.getEndAt().plusDays(1);
 
 		List<FineEntity> rows = includeDeleted
-				? fines.findAllIncludingDeletedInDateRangeWithTargets(fromDate, toDate)
-				: fines.findVisibleInDateRangeWithTargets(fromDate, toDate);
+				? fines.findAllIncludingDeletedInDateRangeWithTargets(fromDate, toDateExclusive)
+				: fines.findVisibleInDateRangeWithTargets(fromDate, toDateExclusive);
 
 		Set<UUID> userIds = new HashSet<>();
 		for (FineEntity f : rows) {
-			userIds.add(f.getCreatorUserId());
+			if (f.getCreatorUserId() != null) {
+				userIds.add(f.getCreatorUserId());
+			}
 			userIds.addAll(f.getTargetUserIds());
 		}
 
@@ -62,7 +62,7 @@ public class FineExportService {
 
 		sb.append('\uFEFF'); // UTF-8 BOM for Excel
 
-		sb.append("semester;periodId;fineId;fineDate;createdAt;deletedAt;creatorUsername;creatorDisplayName;type;amount;reason;targetUsernames;targetDisplayNames;suggesterUserId;acceptedFromSuggestionId")
+		sb.append("semester;fineDate;createdAt;creatorDisplayName;amount;reason;targetUsernames;targetDisplayNames")
 				.append("\r\n");
 
 		for (FineEntity f : rows) {
@@ -71,33 +71,25 @@ public class FineExportService {
 			List<UserEntity> targets = f.getTargetUserIds().stream()
 					.map(userById::get)
 					.filter(Objects::nonNull)
-					.sorted(Comparator.comparing(UserEntity::getUsername))
+					.sorted(Comparator.comparing(UserEntity::getUsername, String.CASE_INSENSITIVE_ORDER))
 					.toList();
 
-			String targetUsernames = targets.stream().map(UserEntity::getUsername).collect(Collectors.joining(","));
-			String targetDisplayNames = targets.stream().map(UserEntity::getDisplayName).collect(Collectors.joining(","));
+			String targetUsernames = targets.stream()
+					.map(UserEntity::getUsername)
+					.collect(Collectors.joining(","));
+
+			String targetDisplayNames = targets.stream()
+					.map(UserEntity::getDisplayName)
+					.collect(Collectors.joining(","));
 
 			sb.append(esc(period.getSemester())).append(';');
-			sb.append(period.getId()).append(';');
-			sb.append(f.getId()).append(';');
 			sb.append(f.getFineDate() == null ? "" : f.getFineDate().toString()).append(';');
 			sb.append(f.getCreatedAt() == null ? "" : TS.format(f.getCreatedAt())).append(';');
-			sb.append(f.getDeletedAt() == null ? "" : TS.format(f.getDeletedAt())).append(';');
-
-			sb.append(creator == null ? "" : esc(creator.getUsername())).append(';');
 			sb.append(creator == null ? "" : esc(creator.getDisplayName())).append(';');
-
-			sb.append(f.getType() == null ? "" : f.getType().name()).append(';');
 			sb.append(formatEuro(f.getAmountCents())).append(';');
 			sb.append(esc(f.getReason())).append(';');
-
 			sb.append(esc(targetUsernames)).append(';');
-			sb.append(esc(targetDisplayNames)).append(';');
-
-			sb.append(f.getSuggesterUserId() == null ? "" : f.getSuggesterUserId().toString()).append(';');
-			sb.append(f.getAcceptedFromSuggestionId() == null ? "" : f.getAcceptedFromSuggestionId().toString());
-
-			sb.append("\r\n");
+			sb.append(esc(targetDisplayNames)).append("\r\n");
 		}
 
 		byte[] bytes = sb.toString().getBytes(StandardCharsets.UTF_8);
@@ -129,9 +121,9 @@ public class FineExportService {
 	}
 
 	private static String formatEuro(int cents) {
-		BigDecimal eur = BigDecimal.valueOf(cents).divide(BigDecimal.valueOf(100), 2, RoundingMode.UNNECESSARY);
-		String s = eur.toPlainString();
-		return s.replace('.', ',');
+		BigDecimal eur = BigDecimal.valueOf(cents)
+				.divide(BigDecimal.valueOf(100), 2, RoundingMode.UNNECESSARY);
+		return eur.toPlainString().replace('.', ',');
 	}
 
 	private static String esc(String s) {
