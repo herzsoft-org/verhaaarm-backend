@@ -62,7 +62,7 @@ public class FineExportService {
 
 		sb.append('\uFEFF'); // UTF-8 BOM for Excel
 
-		sb.append("semester;fineDate;createdAt;creatorDisplayName;amount;reason;targetUsernames;targetDisplayNames")
+		sb.append("Semester;Datum;ErstelltAm;ErstelltVon;Betrag;Grund;BetroffeneUsernames;BetroffeneNamen")
 				.append("\r\n");
 
 		for (FineEntity f : rows) {
