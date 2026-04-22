@@ -12,6 +12,9 @@ import java.security.GeneralSecurityException;
 import java.security.Security;
 import java.util.Base64;
 
+import org.apache.http.HttpEntity;
+import org.apache.http.util.EntityUtils;
+
 @Component
 public class WebPushSender {
 
@@ -66,12 +69,20 @@ public class WebPushSender {
 				payloadJson.getBytes(StandardCharsets.UTF_8)
 		);
 
-		HttpResponse resp = service.send(n);
+		ttpResponse resp = service.send(n);
 		int sc = resp.getStatusLine().getStatusCode();
+
+		String responseBody = null;
+		HttpEntity entity = resp.getEntity();
+		if (entity != null) {
+			responseBody = EntityUtils.toString(entity, StandardCharsets.UTF_8);
+		}
+
 		System.out.println("WEBPUSH response status=" + sc);
+		System.out.println("WEBPUSH response body=" + responseBody);
 
 		if (sc >= 400) {
-			throw new IllegalStateException("WebPush failed: HTTP " + sc);
+			throw new IllegalStateException("WebPush failed: HTTP " + sc + " body=" + responseBody);
 		}
 	}
 }
