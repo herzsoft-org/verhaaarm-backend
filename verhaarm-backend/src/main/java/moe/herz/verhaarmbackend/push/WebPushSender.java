@@ -4,16 +4,25 @@ import nl.martijndwars.webpush.Notification;
 import nl.martijndwars.webpush.PushService;
 import nl.martijndwars.webpush.Utils;
 import org.apache.http.HttpResponse;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
+import java.security.Security;
 import java.util.Base64;
 
 @Component
 public class WebPushSender {
 
 	private final PushConfigProperties cfg;
+
+	static {
+		// Ensure BC is available and preferred for EC key handling used by webpush-java.
+		if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
+			Security.insertProviderAt(new BouncyCastleProvider(), 1);
+		}
+	}
 
 	public WebPushSender(PushConfigProperties cfg) {
 		this.cfg = cfg;
@@ -25,27 +34,26 @@ public class WebPushSender {
 	}
 
 	public void send(String endpoint, String p256dh, String auth, String payloadJson) throws Exception {
+		if (!isConfigured()) {
+			return;
+		}
+
+		String pub = cfg.getVapid().getPublicKey().trim();
+		String priv = cfg.getVapid().getPrivateKey().trim();
+
 		System.out.println("WEBPUSH send called endpoint=" + endpoint);
 		System.out.println("WEBPUSH configured=" + isConfigured());
 		System.out.println("WEBPUSH subject=" + cfg.getVapid().getSubject());
-
-		if (!isConfigured()) {
-			return; // silently skip if not configured
-		}
+		System.out.println("WEBPUSH public len=" + pub.length());
+		System.out.println("WEBPUSH public raw=[" + pub + "]");
+		System.out.println("WEBPUSH private len=" + priv.length());
+		System.out.println("WEBPUSH private raw=[" + priv + "]");
+		System.out.println("WEBPUSH BC provider=" + Security.getProvider(BouncyCastleProvider.PROVIDER_NAME));
 
 		PushService service = new PushService();
-
-		String pub = cfg.getVapid().getPublicKey();
-		String priv = cfg.getVapid().getPrivateKey();
-
-		System.out.println("WEBPUSH public len=" + (pub == null ? "null" : pub.length()));
-		System.out.println("WEBPUSH public raw=[" + pub + "]");
-		System.out.println("WEBPUSH private len=" + (priv == null ? "null" : priv.length()));
-		System.out.println("WEBPUSH private raw=[" + priv + "]");
-
 		try {
-			service.setPublicKey(Utils.loadPublicKey(cfg.getVapid().getPublicKey()));
-			service.setPrivateKey(Utils.loadPrivateKey(cfg.getVapid().getPrivateKey()));
+			service.setPublicKey(Utils.loadPublicKey(pub));
+			service.setPrivateKey(Utils.loadPrivateKey(priv));
 		} catch (GeneralSecurityException e) {
 			throw new IllegalStateException("Invalid VAPID keys", e);
 		}
@@ -58,10 +66,10 @@ public class WebPushSender {
 				payloadJson.getBytes(StandardCharsets.UTF_8)
 		);
 
-
 		HttpResponse resp = service.send(n);
-		System.out.println("WEBPUSH response status=" + resp.getStatusLine().getStatusCode());
 		int sc = resp.getStatusLine().getStatusCode();
+		System.out.println("WEBPUSH response status=" + sc);
+
 		if (sc >= 400) {
 			throw new IllegalStateException("WebPush failed: HTTP " + sc);
 		}
