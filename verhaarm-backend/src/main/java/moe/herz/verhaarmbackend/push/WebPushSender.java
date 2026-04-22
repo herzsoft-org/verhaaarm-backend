@@ -69,7 +69,7 @@ public class WebPushSender {
 				payloadJson.getBytes(StandardCharsets.UTF_8)
 		);
 
-		ttpResponse resp = service.send(n);
+		HttpResponse resp = service.send(n);
 		int sc = resp.getStatusLine().getStatusCode();
 
 		String responseBody = null;
