@@ -34,6 +34,15 @@ public class WebPushSender {
 		}
 
 		PushService service = new PushService();
+
+		String pub = cfg.getVapid().getPublicKey();
+		String priv = cfg.getVapid().getPrivateKey();
+
+		System.out.println("WEBPUSH public len=" + (pub == null ? "null" : pub.length()));
+		System.out.println("WEBPUSH public raw=[" + pub + "]");
+		System.out.println("WEBPUSH private len=" + (priv == null ? "null" : priv.length()));
+		System.out.println("WEBPUSH private raw=[" + priv + "]");
+
 		try {
 			service.setPublicKey(Utils.loadPublicKey(cfg.getVapid().getPublicKey()));
 			service.setPrivateKey(Utils.loadPrivateKey(cfg.getVapid().getPrivateKey()));
