@@ -3,7 +3,9 @@ package moe.herz.verhaarmbackend.push;
 import nl.martijndwars.webpush.Notification;
 import nl.martijndwars.webpush.PushService;
 import nl.martijndwars.webpush.Utils;
+import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
+import org.apache.http.util.EntityUtils;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.springframework.stereotype.Component;
 
@@ -12,16 +14,12 @@ import java.security.GeneralSecurityException;
 import java.security.Security;
 import java.util.Base64;
 
-import org.apache.http.HttpEntity;
-import org.apache.http.util.EntityUtils;
-
 @Component
 public class WebPushSender {
 
 	private final PushConfigProperties cfg;
 
 	static {
-		// Ensure BC is available and preferred for EC key handling used by webpush-java.
 		if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
 			Security.insertProviderAt(new BouncyCastleProvider(), 1);
 		}
@@ -48,9 +46,6 @@ public class WebPushSender {
 		System.out.println("WEBPUSH configured=" + isConfigured());
 		System.out.println("WEBPUSH subject=" + cfg.getVapid().getSubject());
 		System.out.println("WEBPUSH public len=" + pub.length());
-		System.out.println("WEBPUSH public raw=[" + pub + "]");
-		System.out.println("WEBPUSH private len=" + priv.length());
-		System.out.println("WEBPUSH private raw=[" + priv + "]");
 		System.out.println("WEBPUSH BC provider=" + Security.getProvider(BouncyCastleProvider.PROVIDER_NAME));
 
 		PushService service = new PushService();
@@ -82,7 +77,7 @@ public class WebPushSender {
 		System.out.println("WEBPUSH response body=" + responseBody);
 
 		if (sc >= 400) {
-			throw new IllegalStateException("WebPush failed: HTTP " + sc + " body=" + responseBody);
+			throw new WebPushSendException(sc, responseBody);
 		}
 	}
 }

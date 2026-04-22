@@ -51,7 +51,6 @@ public class PushService {
 		if (d == null) {
 			d = new PushDeviceEntity(UUID.randomUUID(), actor.getId(), PushDeviceKind.WEBPUSH);
 		} else {
-			// If endpoint is reused, bind it to the current user (last registration wins)
 			d = new PushDeviceEntity(d.getId(), actor.getId(), PushDeviceKind.WEBPUSH);
 		}
 
@@ -78,7 +77,6 @@ public class PushService {
 		if (d == null) {
 			d = new PushDeviceEntity(UUID.randomUUID(), actor.getId(), PushDeviceKind.FCM);
 		} else {
-			// bind to current user
 			d = new PushDeviceEntity(d.getId(), actor.getId(), PushDeviceKind.FCM);
 		}
 
@@ -89,10 +87,6 @@ public class PushService {
 		devices.save(d);
 	}
 
-	/**
-	 * Option A: WEBPUSH sends one JSON payload; FCM sends notification+data.
-	 * Flutter routes based on RemoteMessage.data (fineId/taskId/type etc.).
-	 */
 	public void sendForNotification(NotificationEntity n) {
 		if (!cfg.isEnabled()) {
 			log.debug("Push disabled; skip notificationId={} userId={}", n.getId(), n.getUserId());
@@ -104,6 +98,7 @@ public class PushService {
 			log.debug("No push devices; skip notificationId={} userId={}", n.getId(), n.getUserId());
 			return;
 		}
+
 		for (PushDeviceEntity d : ds) {
 			log.info("Push device loaded id={} kind={} userId={} endpoint={} fcmTokenPresent={}",
 					d.getId(),
@@ -113,7 +108,6 @@ public class PushService {
 					d.getFcmToken() != null);
 		}
 
-		// WEBPUSH JSON payload
 		String webPushPayload;
 		try {
 			Map<String, Object> webData = new HashMap<>();
@@ -133,7 +127,6 @@ public class PushService {
 			return;
 		}
 
-		// FCM flat data map (for routing)
 		Map<String, String> fcmData;
 		try {
 			var m = new HashMap<String, String>();
@@ -164,6 +157,7 @@ public class PushService {
 			try {
 				if (d.getKind() == PushDeviceKind.WEBPUSH) {
 					if (d.getEndpoint() == null || d.getP256dh() == null || d.getAuth() == null) continue;
+
 					log.info("About to send WEBPUSH deviceId={} endpoint={}", d.getId(), d.getEndpoint());
 					webPush.send(d.getEndpoint(), d.getP256dh(), d.getAuth(), webPushPayload);
 
@@ -171,6 +165,16 @@ public class PushService {
 					if (d.getFcmToken() == null) continue;
 					fcm.send(d.getFcmToken(), fcmData);
 				}
+			} catch (WebPushSendException ex) {
+				if (ex.getStatusCode() == 404 || ex.getStatusCode() == 410) {
+					log.info("Deleting stale WEBPUSH device id={} userId={} status={}",
+							d.getId(), d.getUserId(), ex.getStatusCode());
+					devices.delete(d);
+				}
+
+				log.warn("Push send failed kind={} deviceId={} userId={} notificationId={}: {}",
+						d.getKind(), d.getId(), d.getUserId(), n.getId(), ex.toString(), ex);
+
 			} catch (Exception ex) {
 				log.warn("Push send failed kind={} deviceId={} userId={} notificationId={}: {}",
 						d.getKind(), d.getId(), d.getUserId(), n.getId(), ex.toString(), ex);
