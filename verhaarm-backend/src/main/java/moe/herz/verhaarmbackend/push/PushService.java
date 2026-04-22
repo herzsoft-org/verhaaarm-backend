@@ -87,7 +87,6 @@ public class PushService {
 		d.setLastSeenAt(OffsetDateTime.now());
 
 		devices.save(d);
-		log.info("Registered WEBPUSH device userId={} endpoint={}", actor.getId(), endpoint);
 	}
 
 	/**
