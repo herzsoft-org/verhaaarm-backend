@@ -83,6 +83,7 @@ public class NotificationService {
 				data
 		);
 
+		System.out.println("NOTIF createForUser userId=" + userId + " type=" + type + " title=" + t);
 		notifications.save(n);
 
 		// Send push only after DB commit succeeded
@@ -90,11 +91,13 @@ public class NotificationService {
 			TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
 				@Override
 				public void afterCommit() {
+					System.out.println("NOTIF afterCommit send notificationId=" + n.getId() + " userId=" + n.getUserId());
 					push.sendForNotification(n);
 				}
 			});
 		} else {
 			// no tx -> send immediately (should not normally happen)
+			System.out.println("NOTIF afterCommit send notificationId=" + n.getId() + " userId=" + n.getUserId());
 			push.sendForNotification(n);
 		}
 

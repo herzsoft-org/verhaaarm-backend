@@ -25,6 +25,10 @@ public class WebPushSender {
 	}
 
 	public void send(String endpoint, String p256dh, String auth, String payloadJson) throws Exception {
+		System.out.println("WEBPUSH send called endpoint=" + endpoint);
+		System.out.println("WEBPUSH configured=" + isConfigured());
+		System.out.println("WEBPUSH subject=" + cfg.getVapid().getSubject());
+
 		if (!isConfigured()) {
 			return; // silently skip if not configured
 		}
@@ -47,6 +51,7 @@ public class WebPushSender {
 
 
 		HttpResponse resp = service.send(n);
+		System.out.println("WEBPUSH response status=" + resp.getStatusLine().getStatusCode());
 		int sc = resp.getStatusLine().getStatusCode();
 		if (sc >= 400) {
 			throw new IllegalStateException("WebPush failed: HTTP " + sc);

@@ -63,6 +63,7 @@ public class PushService {
 		d.setLastSeenAt(OffsetDateTime.now());
 
 		devices.save(d);
+		log.info("Registered WEBPUSH device userId={} endpoint={}", actor.getId(), endpoint);
 	}
 
 	@Transactional
@@ -86,6 +87,7 @@ public class PushService {
 		d.setLastSeenAt(OffsetDateTime.now());
 
 		devices.save(d);
+		log.info("Registered WEBPUSH device userId={} endpoint={}", actor.getId(), endpoint);
 	}
 
 	/**
@@ -103,16 +105,29 @@ public class PushService {
 			log.debug("No push devices; skip notificationId={} userId={}", n.getId(), n.getUserId());
 			return;
 		}
+		for (PushDeviceEntity d : ds) {
+			log.info("Push device loaded id={} kind={} userId={} endpoint={} fcmTokenPresent={}",
+					d.getId(),
+					d.getKind(),
+					d.getUserId(),
+					d.getEndpoint(),
+					d.getFcmToken() != null);
+		}
 
 		// WEBPUSH JSON payload
 		String webPushPayload;
 		try {
+			Map<String, Object> webData = new HashMap<>();
+			webData.put("notificationId", n.getId().toString());
+			webData.put("type", n.getType().name());
+			if (n.getData() != null) {
+				webData.putAll(n.getData());
+			}
+
 			webPushPayload = om.writeValueAsString(Map.of(
-					"notificationId", n.getId().toString(),
-					"type", n.getType().name(),
 					"title", n.getTitle(),
 					"body", n.getBody(),
-					"data", n.getData()
+					"data", webData
 			));
 		} catch (Exception e) {
 			log.warn("WebPush payload build failed notificationId={} userId={}", n.getId(), n.getUserId(), e);
@@ -150,6 +165,7 @@ public class PushService {
 			try {
 				if (d.getKind() == PushDeviceKind.WEBPUSH) {
 					if (d.getEndpoint() == null || d.getP256dh() == null || d.getAuth() == null) continue;
+					log.info("About to send WEBPUSH deviceId={} endpoint={}", d.getId(), d.getEndpoint());
 					webPush.send(d.getEndpoint(), d.getP256dh(), d.getAuth(), webPushPayload);
 
 				} else if (d.getKind() == PushDeviceKind.FCM) {
