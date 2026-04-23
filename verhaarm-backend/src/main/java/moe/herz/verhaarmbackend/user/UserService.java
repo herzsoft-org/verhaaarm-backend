@@ -351,7 +351,7 @@ public class UserService {
 		}
 		if (targetUserId == null) throw ApiErrors.badRequest("User id required");
 
-		// Optional: prevent self delete (strongly recommended to avoid locking yourself out)
+		// Optional: prevent self delete
 		if (targetUserId.equals(actor.getId())) {
 			throw ApiErrors.badRequest("Cannot delete self");
 		}
@@ -374,26 +374,41 @@ public class UserService {
 		// 2) Attendance rows referencing the user
 		attendance.hardDeleteAllForUser(targetUserId);
 
-		// 3) Tasks: remove assignee links for this user; optionally delete tasks that become orphaned
+		// 3) Tasks:
+		//    - remove this user from task assignees
+		//    - if a task has no assignees left afterwards, hard delete it
 		List<TaskAssigneeEntity> links = taskAssignees.findAllByUserIdWithTask(targetUserId);
 		for (TaskAssigneeEntity link : links) {
 			UUID taskId = link.getTask().getId();
 
-			// remove this user's assignment
 			taskAssignees.deleteOne(targetUserId, taskId);
 
-			// if nobody is assigned anymore, hard delete the task (keeps DB consistent)
 			if (taskAssignees.countAssignees(taskId) == 0) {
 				taskAssignees.deleteAllForTask(taskId);
 				tasks.hardDeleteById(taskId);
 			}
 		}
 
-		// 4) Roles: make sure user_roles is clean before deleting user row
+		// 4) Remove this user from all fine target mappings.
+		//    This handles both normal fines and attendance-generated late/absent fines.
+		fines.deleteTargetsForUser(targetUserId);
+		fines.flush();
+
+		// 5) Delete any fines that now have no targets left.
+		//    - fines only for this deleted user => removed
+		//    - shared fines => kept
+		List<UUID> orphanFineIds = fines.findFineIdsWithNoTargets();
+		if (!orphanFineIds.isEmpty()) {
+			fines.deleteAllByIdInBatch(orphanFineIds);
+			fines.flush();
+		}
+
+		// 6) Roles: clean up before deleting user row
 		userRoles.deleteAllForUser(targetUserId);
 
-		// 5) Finally delete the user
+		// 7) Finally delete the user
 		users.deleteById(targetUserId);
+		users.flush();
 
 		// AUDIT
 		var d = audit.obj();
