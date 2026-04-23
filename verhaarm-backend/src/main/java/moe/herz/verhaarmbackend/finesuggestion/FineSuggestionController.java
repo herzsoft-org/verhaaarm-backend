@@ -3,6 +3,7 @@ package moe.herz.verhaarmbackend.finesuggestion;
 import jakarta.validation.Valid;
 import moe.herz.verhaarmbackend.finesuggestion.dto.CreateFineSuggestionRequest;
 import moe.herz.verhaarmbackend.finesuggestion.dto.FineSuggestionDto;
+import moe.herz.verhaarmbackend.finesuggestion.dto.UpdateFineSuggestionRequest;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserRepository;
 import org.springframework.security.core.Authentication;
@@ -49,11 +50,26 @@ public class FineSuggestionController {
 		return fineSuggestions.listForActor(actor, parsed, mine);
 	}
 
-
 	@GetMapping("/{id}")
 	public FineSuggestionDto get(@PathVariable UUID id, Authentication auth) {
 		UserEntity actor = actor(auth);
 		return fineSuggestions.getForActor(id, actor);
+	}
+
+	@PatchMapping("/{id}")
+	public FineSuggestionDto update(
+			@PathVariable UUID id,
+			@RequestBody UpdateFineSuggestionRequest req,
+			Authentication auth
+	) {
+		UserEntity actor = actor(auth);
+		return fineSuggestions.update(id, req, actor);
+	}
+
+	@DeleteMapping("/{id}")
+	public void delete(@PathVariable UUID id, Authentication auth) {
+		UserEntity actor = actor(auth);
+		fineSuggestions.delete(id, actor);
 	}
 
 	@PostMapping("/{id}/accept")

@@ -20,7 +20,7 @@ public class FineSuggestionEntity {
 	@Column(name = "fine_date", nullable = false)
 	private LocalDate fineDate;
 
-	@Column(name = "creator_user_id", nullable = false)
+	@Column(name = "creator_user_id")
 	private UUID creatorUserId;
 
 	@Column(name = "catalog_item_id")
@@ -108,6 +108,11 @@ public class FineSuggestionEntity {
 	public boolean isDeleted() { return deletedAt != null; }
 
 	public void setFineDate(LocalDate fineDate) { this.fineDate = fineDate; }
+	public void setCreatorUserId(UUID creatorUserId) { this.creatorUserId = creatorUserId; }
+	public void setCatalogItemId(UUID catalogItemId) { this.catalogItemId = catalogItemId; }
+	public void setReason(String reason) { this.reason = reason; }
+	public void setAmountCents(int amountCents) { this.amountCents = amountCents; }
+	public void setType(FineType type) { this.type = type; }
 	public void setDeletedAt(OffsetDateTime deletedAt) { this.deletedAt = deletedAt; }
 
 	public void clearTargets() { this.targetUserIds.clear(); }
