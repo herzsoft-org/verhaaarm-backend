@@ -15,6 +15,7 @@ import moe.herz.verhaarmbackend.user.dto.UpdateUserRequest;
 import moe.herz.verhaarmbackend.user.dto.UserBalanceDto;
 import moe.herz.verhaarmbackend.user.dto.UserDto;
 import moe.herz.verhaarmbackend.user.dto.UserPickerDto;
+import moe.herz.verhaarmbackend.finephoto.FinePhotoService;
 
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -41,6 +42,7 @@ public class UserService {
 	private final TaskAssigneeRepository taskAssignees;
 	private final AttendanceRepository attendance;
 	private final UserRoleRepository userRoles;
+	private final FinePhotoService finePhotos;
 
 	private static final ZoneId ZONE_BERLIN = ZoneId.of("Europe/Berlin");
 
@@ -56,7 +58,8 @@ public class UserService {
 			TaskRepository tasks,
 			TaskAssigneeRepository taskAssignees,
 			AttendanceRepository attendance,
-			UserRoleRepository userRoles
+			UserRoleRepository userRoles,
+			FinePhotoService finePhotos
 	) {
 		this.users = users;
 		this.fines = fines;
@@ -70,8 +73,8 @@ public class UserService {
 		this.taskAssignees = taskAssignees;
 		this.attendance = attendance;
 		this.userRoles = userRoles;
+		this.finePhotos = finePhotos;
 	}
-
 
 	// --------------------
 	// READ
@@ -395,10 +398,12 @@ public class UserService {
 		fines.flush();
 
 		// 5) Delete any fines that now have no targets left.
-		//    - fines only for this deleted user => removed
-		//    - shared fines => kept
+		//    Also clean up their upload directories first.
 		List<UUID> orphanFineIds = fines.findFineIdsWithNoTargets();
 		if (!orphanFineIds.isEmpty()) {
+			for (UUID fineId : orphanFineIds) {
+				finePhotos.deleteFineDirectoryBestEffort(fineId);
+			}
 			fines.deleteAllByIdInBatch(orphanFineIds);
 			fines.flush();
 		}
