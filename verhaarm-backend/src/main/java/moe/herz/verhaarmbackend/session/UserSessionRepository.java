@@ -3,6 +3,7 @@ package moe.herz.verhaarmbackend.session;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.data.jpa.repository.Modifying;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -27,4 +28,12 @@ public interface UserSessionRepository extends JpaRepository<UserSessionEntity, 
 			@Param("since") OffsetDateTime since,
 			@Param("now") OffsetDateTime now
 	);
+
+	@Modifying
+	@Query("""
+    delete from UserSessionEntity s
+    where s.revokedAt is not null
+      and s.revokedAt < :cutoff
+""")
+	int deleteRevokedBefore(@Param("cutoff") OffsetDateTime cutoff);
 }

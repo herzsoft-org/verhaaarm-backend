@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.time.Duration;
 
 @Service
 public class UserSessionService {
@@ -69,6 +70,12 @@ public class UserSessionService {
 		users.updateLastOnlineAt(userId, saved.getLastActiveAt());
 
 		return saved;
+	}
+
+	@Transactional
+	public int deleteRevokedOlderThan(Duration age) {
+		OffsetDateTime cutoff = OffsetDateTime.now().minus(age);
+		return sessions.deleteRevokedBefore(cutoff);
 	}
 
 	@Transactional
@@ -195,5 +202,11 @@ public class UserSessionService {
 
 	private static String safeBlank(String s, String fallback) {
 		return s == null || s.isBlank() ? fallback : s;
+	}
+
+	@Transactional
+	public int deleteRevokedOlderThan(java.time.Duration age) {
+		OffsetDateTime cutoff = OffsetDateTime.now().minus(age);
+		return sessions.deleteRevokedBefore(cutoff);
 	}
 }
