@@ -3,6 +3,8 @@ package moe.herz.verhaarmbackend.user;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Modifying;
 
 import java.util.List;
 import java.util.Optional;
@@ -85,4 +87,23 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
       and u.disabled = false
 	""")
 	List<UserEntity> findAllEnabledByIdIn(@Param("ids") Collection<UUID> ids);
+
+	@Query("""
+    select distinct u from UserEntity u
+    left join fetch u.roles r
+    where u.lastOnlineAt >= :since
+    order by u.lastOnlineAt desc nulls last, u.usernameNormalized asc
+	""")
+	List<UserEntity> findAllWithRolesOnlineSince(@Param("since") OffsetDateTime since);
+
+	@Modifying
+	@Query("""
+    update UserEntity u
+    set u.lastOnlineAt = :lastOnlineAt
+    where u.id = :userId
+	""")
+	int updateLastOnlineAt(
+			@Param("userId") UUID userId,
+			@Param("lastOnlineAt") OffsetDateTime lastOnlineAt
+	);
 }

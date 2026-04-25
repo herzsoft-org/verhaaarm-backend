@@ -25,6 +25,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.OffsetDateTime;
 
 @Service
 public class UserService {
@@ -79,6 +80,25 @@ public class UserService {
 	// --------------------
 	// READ
 	// --------------------
+
+	@Transactional(readOnly = true)
+	public List<UserDto> listOnline(String range) {
+		OffsetDateTime now = OffsetDateTime.now();
+		OffsetDateTime since;
+
+		String normalized = range == null ? "" : range.trim().toLowerCase(Locale.ROOT);
+
+		switch (normalized) {
+			case "week" -> since = now.minusDays(7);
+			case "month" -> since = now.minusMonths(1);
+			default -> throw ApiErrors.badRequest("online must be one of: week, month");
+		}
+
+		return users.findAllWithRolesOnlineSince(since)
+				.stream()
+				.map(this::toDto)
+				.toList();
+	}
 
 	@Transactional(readOnly = true)
 	public List<UserDto> listAll() {
@@ -506,7 +526,8 @@ public class UserService {
 				u.getUsername(),
 				u.getDisplayName(),
 				u.isDisabled(),
-				roles
+				roles,
+				u.getLastOnlineAt()
 		);
 	}
 }

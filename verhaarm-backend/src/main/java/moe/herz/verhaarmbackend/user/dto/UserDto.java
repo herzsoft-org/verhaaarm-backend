@@ -1,5 +1,6 @@
 package moe.herz.verhaarmbackend.user.dto;
 
+import java.time.OffsetDateTime;
 import java.util.Set;
 import java.util.UUID;
 
@@ -8,5 +9,6 @@ public record UserDto(
 		String username,
 		String displayName,
 		boolean disabled,
-		Set<String> roles
+		Set<String> roles,
+		OffsetDateTime lastOnlineAt
 ) {}

@@ -36,6 +36,9 @@ public class UserEntity {
 	@Column(name = "updated_at", nullable = false)
 	private OffsetDateTime updatedAt;
 
+	@Column(name = "last_online_at")
+	private OffsetDateTime lastOnlineAt;
+
 	@OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
 	private Set<UserRoleEntity> roles = new HashSet<>();
 
@@ -111,4 +114,7 @@ public class UserEntity {
 	public OffsetDateTime getUpdatedAt() { return updatedAt; }
 
 	public Set<UserRoleEntity> getRoles() { return roles; }
+
+	public OffsetDateTime getLastOnlineAt() { return lastOnlineAt; }
+	public void setLastOnlineAt(OffsetDateTime lastOnlineAt) { this.lastOnlineAt = lastOnlineAt; }
 }

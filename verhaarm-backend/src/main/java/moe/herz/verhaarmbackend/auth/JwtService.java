@@ -37,13 +37,17 @@ public class JwtService {
 		this.accessTtlSeconds = accessTtlSeconds;
 	}
 
-	public String issueAccessToken(UUID userId, String username, Set<UserRole> roles) {
+	public String issueAccessToken(UUID userId, String username, Set<UserRole> roles, UUID sessionId) {
 		Instant now = Instant.now();
 		Instant exp = now.plusSeconds(accessTtlSeconds);
 
 		Map<String, Object> claims = new HashMap<>();
 		claims.put("uid", userId.toString());
 		claims.put("roles", roles.stream().map(Enum::name).toList());
+
+		if (sessionId != null) {
+			claims.put("sid", sessionId.toString());
+		}
 
 		return Jwts.builder()
 				.issuer(issuer)

@@ -40,6 +40,12 @@ public class UserController {
 		return users.picker(true, query);
 	}
 
+	@GetMapping(params = "online")
+	@PreAuthorize("hasAnyRole('ADMIN','SENIOR')")
+	public List<UserDto> listOnline(@RequestParam String online) {
+		return users.listOnline(online);
+	}
+
 	@GetMapping
 	@PreAuthorize("hasAnyRole('ADMIN','SENIOR')")
 	public List<UserDto> listUsers() {

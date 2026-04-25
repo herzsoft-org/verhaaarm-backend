@@ -3,11 +3,13 @@ package moe.herz.verhaarmbackend.auth;
 import moe.herz.verhaarmbackend.common.ApiErrors;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.OffsetDateTime;
 import java.util.HexFormat;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -24,25 +26,25 @@ public class RefreshTokenService {
 		this.ttlSeconds = ttlSeconds;
 	}
 
-	public record Issued(UUID userId, String refreshToken, UUID refreshId, OffsetDateTime expiresAt) {}
+	public record Issued(UUID userId, String refreshToken, UUID refreshId, UUID sessionId, OffsetDateTime expiresAt) {}
 
-	public Issued issue(UUID userId) {
-		// refresh token is opaque random string (not JWT)
+	public record Consumed(UUID userId, UUID refreshId, UUID sessionId) {}
+
+	@Transactional
+	public Issued issue(UUID userId, UUID sessionId) {
 		UUID refreshId = UUID.randomUUID();
 		String token = UUID.randomUUID() + "-" + UUID.randomUUID();
 		String hash = sha256Hex(token);
 
 		OffsetDateTime expiresAt = OffsetDateTime.now().plusSeconds(ttlSeconds);
-		RefreshTokenEntity e = new RefreshTokenEntity(refreshId, userId, hash, expiresAt);
+		RefreshTokenEntity e = new RefreshTokenEntity(refreshId, userId, sessionId, hash, expiresAt);
 		repo.save(e);
 
-		return new Issued(userId, token, refreshId, expiresAt);
+		return new Issued(userId, token, refreshId, sessionId, expiresAt);
 	}
 
-	/**
-	 * Validate and rotate (revoke old token, issue new one).
-	 */
-	public Issued rotate(String presentedToken) {
+	@Transactional
+	public Consumed consumeForRotation(String presentedToken) {
 		String hash = sha256Hex(presentedToken);
 
 		RefreshTokenEntity existing = repo.findByTokenHash(hash)
@@ -52,19 +54,20 @@ public class RefreshTokenService {
 			throw ApiErrors.unauthorized("Refresh token expired or revoked");
 		}
 
-		// revoke old token
 		existing.setRevoked(true);
 		repo.save(existing);
 
-		// issue new token for same user
-		return issue(existing.getUserId());
+		return new Consumed(existing.getUserId(), existing.getId(), existing.getSessionId());
 	}
 
-	public void revoke(String presentedToken) {
+	@Transactional
+	public Optional<UUID> revoke(String presentedToken) {
 		String hash = sha256Hex(presentedToken);
-		repo.findByTokenHash(hash).ifPresent(e -> {
+
+		return repo.findByTokenHash(hash).map(e -> {
 			e.setRevoked(true);
 			repo.save(e);
+			return e.getSessionId();
 		});
 	}
 
