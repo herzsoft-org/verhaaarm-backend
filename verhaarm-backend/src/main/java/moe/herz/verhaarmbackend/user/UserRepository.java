@@ -10,6 +10,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.Collection;
+import java.time.OffsetDateTime;
+import org.springframework.data.jpa.repository.Modifying;
 
 public interface UserRepository extends JpaRepository<UserEntity, UUID> {
 

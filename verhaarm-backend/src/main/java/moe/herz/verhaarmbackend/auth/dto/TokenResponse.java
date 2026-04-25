@@ -1,12 +1,9 @@
 package moe.herz.verhaarmbackend.auth.dto;
 
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
-import moe.herz.verhaarmbackend.session.dto.SessionDeviceInfoRequest;
+import java.util.UUID;
 
-public record RefreshRequest(
-		@NotBlank String refreshToken,
-
-		// Optional for backwards compatibility.
-		@Valid SessionDeviceInfoRequest deviceInfo
+public record TokenResponse(
+		String accessToken,
+		String refreshToken,
+		UUID sessionId
 ) {}
