@@ -139,8 +139,9 @@ public class UserSessionService {
 		Map<String, Long> grouped = input.stream()
 				.collect(Collectors.groupingBy(s -> {
 					String appType = s.getAppType() == null ? "UNKNOWN" : s.getAppType().name();
-					String browser = safeBlank(s.getBrowserName(), "UNKNOWN");
-					return appType + "\u0000" + browser;
+					String detail = sessionStatsDetail(s, appType);
+
+					return appType + "\u0000" + detail;
 				}, Collectors.counting()));
 
 		return grouped.entrySet()
@@ -154,6 +155,29 @@ public class UserSessionService {
 								.thenComparing(SessionStatsRowDto::browserName)
 				)
 				.toList();
+	}
+
+	private String sessionStatsDetail(UserSessionEntity s, String appType) {
+		if ("WEB".equals(appType)) {
+			return safeBlank(s.getBrowserName(), "UNKNOWN");
+		}
+
+		if ("ANDROID".equals(appType)) {
+			String osName = safeBlank(s.getOsName(), "Android");
+			String osVersion = safeBlank(s.getOsVersion(), "");
+
+			if (osVersion.isBlank()) {
+				return osName;
+			}
+
+			if ("Android".equalsIgnoreCase(osName)) {
+				return "Android " + osVersion;
+			}
+
+			return osName + " " + osVersion;
+		}
+
+		return "UNKNOWN";
 	}
 
 	private UserSessionDto toDto(UserSessionEntity s, UUID currentSessionId) {
