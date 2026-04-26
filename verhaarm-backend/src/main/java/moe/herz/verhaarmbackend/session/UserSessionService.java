@@ -152,18 +152,21 @@ public class UserSessionService {
 				})
 				.sorted(
 						Comparator.comparing(SessionStatsRowDto::appType)
-								.thenComparing(SessionStatsRowDto::browserName)
+								.thenComparing(SessionStatsRowDto::detail)
 				)
 				.toList();
 	}
 
 	private String sessionStatsDetail(UserSessionEntity s, String appType) {
 		if ("WEB".equals(appType)) {
-			return safeBlank(s.getBrowserName(), "UNKNOWN");
+			String browser = normalizeBrowserName(safeBlank(s.getBrowserName(), "Unbekannter Browser"));
+			String os = normalizeOsName(safeBlank(s.getOsName(), "Unbekanntes System"));
+
+			return browser + " · " + os;
 		}
 
 		if ("ANDROID".equals(appType)) {
-			String osName = safeBlank(s.getOsName(), "Android");
+			String osName = normalizeOsName(safeBlank(s.getOsName(), "Android"));
 			String osVersion = safeBlank(s.getOsVersion(), "");
 
 			if (osVersion.isBlank()) {
@@ -177,7 +180,37 @@ public class UserSessionService {
 			return osName + " " + osVersion;
 		}
 
-		return "UNKNOWN";
+		return "Unbekannt";
+	}
+
+	private static String normalizeBrowserName(String value) {
+		if (value == null || value.isBlank()) return "Unbekannter Browser";
+
+		return switch (value.trim().toUpperCase()) {
+			case "CHROME" -> "Chrome";
+			case "SAFARI" -> "Safari";
+			case "FIREFOX" -> "Firefox";
+			case "EDGE" -> "Edge";
+			case "OPERA" -> "Opera";
+			case "SAMSUNG", "SAMSUNG INTERNET" -> "Samsung Internet";
+			case "UNKNOWN" -> "Unbekannter Browser";
+			default -> value.trim();
+		};
+	}
+
+	private static String normalizeOsName(String value) {
+		if (value == null || value.isBlank()) return "Unbekanntes System";
+
+		return switch (value.trim().toUpperCase()) {
+			case "ANDROID" -> "Android";
+			case "IOS" -> "iOS";
+			case "IPADOS" -> "iPadOS";
+			case "MACOS", "MAC OS", "MAC OS X" -> "macOS";
+			case "WINDOWS" -> "Windows";
+			case "LINUX" -> "Linux";
+			case "UNKNOWN" -> "Unbekanntes System";
+			default -> value.trim();
+		};
 	}
 
 	private UserSessionDto toDto(UserSessionEntity s, UUID currentSessionId) {
