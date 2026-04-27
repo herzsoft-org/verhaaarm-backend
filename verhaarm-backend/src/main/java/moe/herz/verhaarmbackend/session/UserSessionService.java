@@ -11,10 +11,10 @@ import moe.herz.verhaarmbackend.user.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
-import java.time.Duration;
 
 @Service
 public class UserSessionService {
@@ -119,11 +119,37 @@ public class UserSessionService {
 	public SessionStatsResponse stats() {
 		OffsetDateTime now = OffsetDateTime.now();
 
-		return new SessionStatsResponse(
-				groupStats(sessions.findActiveSince(now.minusDays(7), now)),
-				groupStats(sessions.findActiveSince(now.minusMonths(1), now)),
-				groupStats(sessions.findActiveSince(now.minusYears(1), now))
+		List<SessionStatsRowDto> active = groupStats(
+				sessions.findCurrentlyValid(now)
 		);
+
+		/*
+		 * Compatibility note:
+		 *
+		 * This endpoint originally returned three historical buckets:
+		 * - week
+		 * - month
+		 * - year
+		 *
+		 * That made sense while revoked sessions were kept around as soft-deleted
+		 * records. The app later changed to hard-delete revoked sessions shortly
+		 * after revocation/logout, currently after about 10 minutes. Because of that,
+		 * these buckets no longer represent useful historical statistics.
+		 *
+		 * The deployed Flutter frontend still expects the old response shape and
+		 * reads week/month/year. To avoid breaking deployed clients, keep the DTO
+		 * fields as-is, but intentionally fill all three with the same current
+		 * valid-session snapshot.
+		 *
+		 * In this context, "active" means:
+		 * - not revoked
+		 * - not expired
+		 *
+		 * It does not mean "used within the last X minutes". The older method
+		 * findActiveSince(...) is kept for now in case a real recency-based view is
+		 * needed later.
+		 */
+		return new SessionStatsResponse(active, active, active);
 	}
 
 	private void revokeSession(UserSessionEntity s) {

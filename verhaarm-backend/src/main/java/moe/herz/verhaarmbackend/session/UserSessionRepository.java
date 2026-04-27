@@ -29,11 +29,20 @@ public interface UserSessionRepository extends JpaRepository<UserSessionEntity, 
 			@Param("now") OffsetDateTime now
 	);
 
+	@Query("""
+        select s from UserSessionEntity s
+        where s.revokedAt is null
+          and (s.expiresAt is null or s.expiresAt > :now)
+    """)
+	List<UserSessionEntity> findCurrentlyValid(
+			@Param("now") OffsetDateTime now
+	);
+
 	@Modifying
 	@Query("""
-    delete from UserSessionEntity s
-    where s.revokedAt is not null
-      and s.revokedAt < :cutoff
-""")
+        delete from UserSessionEntity s
+        where s.revokedAt is not null
+          and s.revokedAt < :cutoff
+    """)
 	int deleteRevokedBefore(@Param("cutoff") OffsetDateTime cutoff);
 }
