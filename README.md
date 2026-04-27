@@ -41,3 +41,12 @@ See `verhaaarm-infra` repo:
 
 ## Project Status
 MVP target: Users/Roles → Periods → Fines → CSV exports → Events/Attendance → Suggestions/Live events.
+
+## License
+
+This project is proprietary and closed source.
+
+Copyright (c) 2026 Valentin Schecklein. All rights reserved.
+
+No permission is granted to use, copy, modify, distribute, host, deploy, or
+otherwise exploit this software without prior written permission.
