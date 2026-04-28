@@ -4,6 +4,7 @@ import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.period.dto.ConventPeriodDto;
 import moe.herz.verhaarmbackend.period.dto.CreateConventPeriodRequest;
 import moe.herz.verhaarmbackend.period.dto.UpdateConventPeriodRequest;
+import moe.herz.verhaarmbackend.periodprotocol.ConventPeriodProtocolService;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,9 +23,14 @@ public class ConventPeriodService {
 	private static final ZoneId ZONE_BERLIN = ZoneId.of("Europe/Berlin");
 
 	private final ConventPeriodRepository periods;
+	private final ConventPeriodProtocolService protocols;
 
-	public ConventPeriodService(ConventPeriodRepository periods) {
+	public ConventPeriodService(
+			ConventPeriodRepository periods,
+			ConventPeriodProtocolService protocols
+	) {
 		this.periods = periods;
+		this.protocols = protocols;
 	}
 
 	@Transactional(readOnly = true)
@@ -109,10 +115,13 @@ public class ConventPeriodService {
 	public void delete(UUID id) {
 		var p = periods.findById(id).orElseThrow(() -> ApiErrors.notFound("Period not found"));
 
-		// Deletion is allowed; no "active" invariant anymore.
 		try {
 			periods.delete(p);
 			periods.flush();
+
+			// DB row is removed through ON DELETE CASCADE.
+			// This cleans the uploaded PDF directory from disk.
+			protocols.deletePeriodDirectoryBestEffort(id);
 		} catch (DataIntegrityViolationException e) {
 			throw ApiErrors.badRequest("Cannot delete period due to existing references");
 		}
@@ -149,7 +158,8 @@ public class ConventPeriodService {
 				p.getEndAt(),
 				// active is computed: "true if it covers today"
 				isActiveToday(p),
-				p.isLocked()
+				p.isLocked(),
+				protocols.exists(p.getId())
 		);
 	}
 

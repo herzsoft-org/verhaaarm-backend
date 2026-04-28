@@ -9,5 +9,6 @@ public record ConventPeriodDto(
 		LocalDate startAt,
 		LocalDate endAt,
 		boolean active,   // computed by backend now
-		boolean locked
+		boolean locked,
+		boolean hasProtocolPdf
 ) {}
