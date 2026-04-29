@@ -47,7 +47,7 @@ public class UserController {
 	}
 
 	@GetMapping
-	@PreAuthorize("hasAnyRole('ADMIN','SENIOR')")
+	@PreAuthorize("hasAnyRole('ADMIN','SENIOR','HOUSEKEEPING','TREASURER')")
 	public List<UserDto> listUsers() {
 		return users.listAll();
 	}
