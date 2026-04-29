@@ -5,5 +5,6 @@ import java.util.Set;
 public record UpdateUserRequest(
 		String displayName,
 		Boolean disabled,
-		Set<String> roles
+		Set<String> roles,
+		String memberStatus
 ) {}

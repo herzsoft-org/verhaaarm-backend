@@ -475,7 +475,13 @@ public class TaskService {
 				.map(TaskAssigneeEntity::getUser)
 				.filter(Objects::nonNull)
 				.sorted(Comparator.comparing(UserEntity::getUsernameNormalized))
-				.map(u -> new UserPickerDto(u.getId(), u.getUsername(), u.getDisplayName()))
+				.map(u -> new UserPickerDto(
+						u.getId(),
+						u.getUsername(),
+						u.getDisplayName(),
+						u.getMemberStatus() == null ? "BURSCH" : u.getMemberStatus().name(),
+						u.getMemberStatus() == null || u.getMemberStatus().isAktivitas()
+				))
 				.toList();
 
 		var days = normalizeWeekdays(splitDays(t.getRecurringDays()));

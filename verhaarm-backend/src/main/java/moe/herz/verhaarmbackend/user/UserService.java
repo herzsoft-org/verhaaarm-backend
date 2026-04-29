@@ -5,6 +5,7 @@ import moe.herz.verhaarmbackend.audit.AuditLogService;
 import moe.herz.verhaarmbackend.auth.RefreshTokenRepository;
 import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.fine.FineRepository;
+import moe.herz.verhaarmbackend.finephoto.FinePhotoService;
 import moe.herz.verhaarmbackend.period.ConventPeriodRepository;
 import moe.herz.verhaarmbackend.push.PushDeviceRepository;
 import moe.herz.verhaarmbackend.task.TaskAssigneeEntity;
@@ -15,17 +16,16 @@ import moe.herz.verhaarmbackend.user.dto.UpdateUserRequest;
 import moe.herz.verhaarmbackend.user.dto.UserBalanceDto;
 import moe.herz.verhaarmbackend.user.dto.UserDto;
 import moe.herz.verhaarmbackend.user.dto.UserPickerDto;
-import moe.herz.verhaarmbackend.finephoto.FinePhotoService;
 
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
-import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.OffsetDateTime;
 
 @Service
 public class UserService {
@@ -46,7 +46,6 @@ public class UserService {
 	private final FinePhotoService finePhotos;
 
 	private static final ZoneId ZONE_BERLIN = ZoneId.of("Europe/Berlin");
-
 
 	public UserService(
 			UserRepository users,
@@ -127,7 +126,17 @@ public class UserService {
 
 		return users.searchActiveForPicker(qNorm, qLower)
 				.stream()
-				.map(u -> new UserPickerDto(u.getId(), u.getUsername(), u.getDisplayName()))
+				.map(u -> {
+					UserMemberStatus status = safeMemberStatus(u);
+
+					return new UserPickerDto(
+							u.getId(),
+							u.getUsername(),
+							u.getDisplayName(),
+							status.name(),
+							status.isAktivitas()
+					);
+				})
 				.toList();
 	}
 
@@ -203,6 +212,7 @@ public class UserService {
 		}
 
 		Set<UserRole> newRoles = enforceSingleRole(parseRoles(req.roles()));
+		UserMemberStatus memberStatus = parseMemberStatusOrDefault(req.memberStatus());
 
 		validateRoleConstraintsOnChange(null, false, newRoles, false);
 
@@ -214,6 +224,8 @@ public class UserService {
 				false
 		);
 
+		u.setMemberStatus(memberStatus);
+
 		u.clearRoles();
 		for (UserRole r : newRoles) u.addRole(r);
 
@@ -224,6 +236,7 @@ public class UserService {
 		audit.put(d, "targetUserId", u.getId());
 		audit.put(d, "targetUsername", u.getUsername());
 		audit.put(d, "targetDisplayName", u.getDisplayName());
+		audit.put(d, "memberStatus", memberStatus.name());
 		audit.putStringArray(d, "roles", newRoles.stream().map(Enum::name).sorted().toList());
 		audit.log(actor, "user.create", d);
 
@@ -280,6 +293,16 @@ public class UserService {
 		boolean beforeDisabled = u.isDisabled();
 		Set<UserRole> beforeRoles = u.roleSet();
 		String beforeDisplayName = u.getDisplayName();
+		UserMemberStatus beforeMemberStatus = safeMemberStatus(u);
+
+		UserMemberStatus newMemberStatus = beforeMemberStatus;
+		if (req.memberStatus() != null) {
+			if (!actorIsAdmin) {
+				throw ApiErrors.forbidden("Only ADMIN may change member status");
+			}
+
+			newMemberStatus = parseMemberStatus(req.memberStatus());
+		}
 
 		validateRoleConstraintsOnChange(u, u.isDisabled(), newRoles, newDisabled);
 
@@ -288,6 +311,7 @@ public class UserService {
 		}
 
 		u.setDisabled(newDisabled);
+		u.setMemberStatus(newMemberStatus);
 
 		u.clearRoles();
 		for (UserRole r : newRoles) u.addRole(r);
@@ -312,6 +336,16 @@ public class UserService {
 			audit.put(d, "beforeDisabled", beforeDisabled);
 			audit.put(d, "afterDisabled", newDisabled);
 			audit.log(actor, "user.disabledChanged", d);
+		}
+
+		// AUDIT: member status change
+		if (beforeMemberStatus != newMemberStatus) {
+			var d = audit.obj();
+			audit.put(d, "targetUserId", u.getId());
+			audit.put(d, "targetUsername", u.getUsername());
+			audit.put(d, "beforeMemberStatus", beforeMemberStatus.name());
+			audit.put(d, "afterMemberStatus", newMemberStatus.name());
+			audit.log(actor, "user.memberStatusChanged", d);
 		}
 
 		// optional: display name changes
@@ -440,6 +474,7 @@ public class UserService {
 		audit.put(d, "targetUserId", targetUserId);
 		audit.put(d, "targetUsername", target.getUsername());
 		audit.put(d, "targetDisplayName", target.getDisplayName());
+		audit.put(d, "memberStatus", safeMemberStatus(target).name());
 		audit.log(actor, "user.hard_delete", d);
 	}
 
@@ -489,15 +524,18 @@ public class UserService {
 
 	private static Set<UserRole> parseRoles(Set<String> roles) {
 		if (roles == null) return Set.of();
+
 		Set<UserRole> out = new HashSet<>();
 		for (String r : roles) {
 			if (r == null || r.isBlank()) continue;
+
 			try {
 				out.add(UserRole.valueOf(r.trim().toUpperCase(Locale.ROOT)));
 			} catch (IllegalArgumentException e) {
 				throw ApiErrors.badRequest("Unknown role: " + r);
 			}
 		}
+
 		return out;
 	}
 
@@ -515,11 +553,43 @@ public class UserService {
 		return roles;
 	}
 
+	private static UserMemberStatus parseMemberStatusOrDefault(String raw) {
+		if (raw == null || raw.isBlank()) {
+			return UserMemberStatus.BURSCH;
+		}
+
+		return parseMemberStatus(raw);
+	}
+
+	private static UserMemberStatus parseMemberStatus(String raw) {
+		if (raw == null || raw.isBlank()) {
+			throw ApiErrors.badRequest("memberStatus required");
+		}
+
+		String normalized = raw.trim().toUpperCase(Locale.ROOT);
+
+		try {
+			return UserMemberStatus.valueOf(normalized);
+		} catch (IllegalArgumentException e) {
+			throw ApiErrors.badRequest("memberStatus must be one of: FUX, BURSCH, INAKTIVER, PHILISTER");
+		}
+	}
+
+	private static UserMemberStatus safeMemberStatus(UserEntity u) {
+		if (u == null || u.getMemberStatus() == null) {
+			return UserMemberStatus.BURSCH;
+		}
+
+		return u.getMemberStatus();
+	}
+
 	private UserDto toDto(UserEntity u) {
 		Set<String> roles = u.getRoles().stream()
 				.map(UserRoleEntity::getRole)
 				.map(Enum::name)
 				.collect(Collectors.toSet());
+
+		UserMemberStatus status = safeMemberStatus(u);
 
 		return new UserDto(
 				u.getId(),
@@ -527,6 +597,8 @@ public class UserService {
 				u.getDisplayName(),
 				u.isDisabled(),
 				roles,
+				status.name(),
+				status.isAktivitas(),
 				u.getLastOnlineAt()
 		);
 	}

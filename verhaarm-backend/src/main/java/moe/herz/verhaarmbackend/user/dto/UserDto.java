@@ -10,5 +10,7 @@ public record UserDto(
 		String displayName,
 		boolean disabled,
 		Set<String> roles,
+		String memberStatus,
+		boolean aktivitas,
 		OffsetDateTime lastOnlineAt
 ) {}

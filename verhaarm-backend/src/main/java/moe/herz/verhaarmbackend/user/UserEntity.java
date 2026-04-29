@@ -61,6 +61,7 @@ public class UserEntity {
 		if (usernameNormalized == null || usernameNormalized.isBlank()) {
 			usernameNormalized = UsernameNormalizer.normalize(username);
 		}
+		if (memberStatus == null) memberStatus = UserMemberStatus.BURSCH;
 		if (createdAt == null) createdAt = OffsetDateTime.now();
 		if (updatedAt == null) updatedAt = OffsetDateTime.now();
 	}
@@ -70,6 +71,10 @@ public class UserEntity {
 		updatedAt = OffsetDateTime.now();
 		usernameNormalized = UsernameNormalizer.normalize(username);
 	}
+
+	@Enumerated(EnumType.STRING)
+	@Column(name = "member_status", nullable = false)
+	private UserMemberStatus memberStatus = UserMemberStatus.BURSCH;
 
 	// --- Role helpers
 
@@ -117,4 +122,18 @@ public class UserEntity {
 
 	public OffsetDateTime getLastOnlineAt() { return lastOnlineAt; }
 	public void setLastOnlineAt(OffsetDateTime lastOnlineAt) { this.lastOnlineAt = lastOnlineAt; }
+
+	public UserMemberStatus getMemberStatus() {
+		return memberStatus;
+	}
+
+	public void setMemberStatus(UserMemberStatus memberStatus) {
+		this.memberStatus = memberStatus == null ? UserMemberStatus.BURSCH : memberStatus;
+	}
+
+	public boolean isAktivitas() {
+		return memberStatus == null || memberStatus.isAktivitas();
+	}
+
+
 }
