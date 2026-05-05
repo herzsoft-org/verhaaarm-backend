@@ -571,7 +571,7 @@ public class UserService {
 		try {
 			return UserMemberStatus.valueOf(normalized);
 		} catch (IllegalArgumentException e) {
-			throw ApiErrors.badRequest("memberStatus must be one of: FUX, BURSCH, INAKTIVER, PHILISTER");
+			throw ApiErrors.badRequest("memberStatus must be one of: FUX, SCHUELERFUX, MILITAERFUX, BURSCH, INAKTIVER, PHILISTER");
 		}
 	}
 
