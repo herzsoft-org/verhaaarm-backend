@@ -12,6 +12,7 @@ import moe.herz.verhaarmbackend.user.UserRole;
 import moe.herz.verhaarmbackend.user.UserRoleEntity;
 
 import jakarta.validation.Valid;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.web.bind.annotation.*;
@@ -45,7 +46,7 @@ public class AuthController {
 	}
 
 	@PostMapping("/login")
-	public TokenResponse login(@Valid @RequestBody LoginRequest req) {
+	public TokenResponse login(@Valid @RequestBody LoginRequest req, HttpServletRequest request) {
 		try {
 			authManager.authenticate(new UsernamePasswordAuthenticationToken(req.username(), req.password()));
 		} catch (Exception e) {
@@ -61,7 +62,7 @@ public class AuthController {
 				.map(UserRoleEntity::getRole)
 				.collect(Collectors.toSet());
 
-		UserSessionEntity session = sessions.createSession(u.getId(), req.deviceInfo());
+		UserSessionEntity session = sessions.createSession(u.getId(), req.deviceInfo(), clientIp(request));
 
 		String access = jwtService.issueAccessToken(u.getId(), u.getUsername(), roles, session.getId());
 		var issued = refreshTokens.issue(u.getId(), session.getId());
@@ -71,7 +72,7 @@ public class AuthController {
 	}
 
 	@PostMapping("/refresh")
-	public TokenResponse refresh(@Valid @RequestBody RefreshRequest req) {
+	public TokenResponse refresh(@Valid @RequestBody RefreshRequest req, HttpServletRequest request) {
 		var consumed = refreshTokens.consumeForRotation(req.refreshToken());
 
 		UserEntity u = users.findByIdWithRoles(consumed.userId())
@@ -85,9 +86,9 @@ public class AuthController {
 		// Old refresh tokens from before V35 have no session_id.
 		// On first refresh after the backend update, attach them to a new legacy session.
 		if (sessionId == null) {
-			sessionId = sessions.createSession(u.getId(), req.deviceInfo()).getId();
+			sessionId = sessions.createSession(u.getId(), req.deviceInfo(), clientIp(request)).getId();
 		} else {
-			sessions.touch(sessionId, u.getId(), req.deviceInfo());
+			sessions.touch(sessionId, u.getId(), req.deviceInfo(), clientIp(request));
 		}
 
 		Set<UserRole> roles = u.getRoles().stream()
@@ -105,5 +106,19 @@ public class AuthController {
 	public void logout(@Valid @RequestBody RefreshRequest req) {
 		refreshTokens.revoke(req.refreshToken())
 				.ifPresent(sessions::revokeSessionById);
+	}
+
+	private static String clientIp(HttpServletRequest request) {
+		String forwarded = request.getHeader("X-Forwarded-For");
+		if (forwarded != null && !forwarded.isBlank()) {
+			return forwarded.split(",")[0].trim();
+		}
+
+		String realIp = request.getHeader("X-Real-IP");
+		if (realIp != null && !realIp.isBlank()) {
+			return realIp.trim();
+		}
+
+		return request.getRemoteAddr();
 	}
 }

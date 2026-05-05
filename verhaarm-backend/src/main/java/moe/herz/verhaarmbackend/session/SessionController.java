@@ -42,9 +42,24 @@ public class SessionController {
 		CurrentSession current = current(request);
 
 		if (current.sessionId() != null) {
-			sessions.touch(current.sessionId(), current.userId(), info);
+			sessions.touch(current.sessionId(), current.userId(), info, clientIp(request));
 		}
 
+		return ResponseEntity.noContent().build();
+	}
+
+	@GetMapping("/admin")
+	@PreAuthorize("hasRole('ADMIN')")
+	public List<UserSessionDto> allSessions() {
+		return sessions.listAllAdmin();
+	}
+
+	@DeleteMapping("/admin/{sessionId}")
+	@PreAuthorize("hasRole('ADMIN')")
+	public ResponseEntity<Void> revokeAdmin(
+			@PathVariable UUID sessionId
+	) {
+		sessions.revokeAdmin(sessionId);
 		return ResponseEntity.noContent().build();
 	}
 
@@ -62,6 +77,20 @@ public class SessionController {
 	@PreAuthorize("hasRole('ADMIN')")
 	public SessionStatsResponse stats() {
 		return sessions.stats();
+	}
+
+	private static String clientIp(HttpServletRequest request) {
+		String forwarded = request.getHeader("X-Forwarded-For");
+		if (forwarded != null && !forwarded.isBlank()) {
+			return forwarded.split(",")[0].trim();
+		}
+
+		String realIp = request.getHeader("X-Real-IP");
+		if (realIp != null && !realIp.isBlank()) {
+			return realIp.trim();
+		}
+
+		return request.getRemoteAddr();
 	}
 
 	private CurrentSession current(HttpServletRequest request) {

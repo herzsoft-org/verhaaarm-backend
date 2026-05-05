@@ -6,6 +6,8 @@ import java.util.UUID;
 public record UserSessionDto(
 		UUID id,
 		UUID userId,
+		String username,
+		String displayName,
 		String appType,
 		String deviceName,
 		String deviceModel,
@@ -14,6 +16,8 @@ public record UserSessionDto(
 		String browserName,
 		String browserVersion,
 		String userAgent,
+		String ipAddress,
+		String countryCode,
 		OffsetDateTime createdAt,
 		OffsetDateTime lastActiveAt,
 		OffsetDateTime expiresAt,

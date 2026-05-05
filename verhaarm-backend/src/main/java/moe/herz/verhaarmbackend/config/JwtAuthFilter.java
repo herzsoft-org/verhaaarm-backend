@@ -1,4 +1,6 @@
 package moe.herz.verhaarmbackend.config;
+import moe.herz.verhaarmbackend.session.UserSessionService;
+import java.util.UUID;
 
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
@@ -25,10 +27,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
 	private final JwtService jwtService;
 	private final UserRepository userRepository;
+	private final UserSessionService sessions;
 
-	public JwtAuthFilter(JwtService jwtService, UserRepository userRepository) {
+	public JwtAuthFilter(
+			JwtService jwtService,
+			UserRepository userRepository,
+			UserSessionService sessions
+	) {
 		this.jwtService = jwtService;
 		this.userRepository = userRepository;
+		this.sessions = sessions;
 	}
 
 	@Override
@@ -86,6 +94,24 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 		if (user == null || user.isDisabled()) {
 			filterChain.doFilter(request, response);
 			return;
+		}
+
+		String uidRaw = claims.get("uid", String.class);
+		String sidRaw = claims.get("sid", String.class);
+
+		if (uidRaw != null && sidRaw != null && !uidRaw.isBlank() && !sidRaw.isBlank()) {
+			try {
+				UUID userId = UUID.fromString(uidRaw);
+				UUID sessionId = UUID.fromString(sidRaw);
+
+				if (!sessions.isValidSession(sessionId, userId)) {
+					filterChain.doFilter(request, response);
+					return;
+				}
+			} catch (Exception e) {
+				filterChain.doFilter(request, response);
+				return;
+			}
 		}
 
 		var authorities = user.getRoles().stream()

@@ -20,6 +20,12 @@ public interface UserSessionRepository extends JpaRepository<UserSessionEntity, 
 
 	@Query("""
         select s from UserSessionEntity s
+        order by s.lastActiveAt desc
+    """)
+	List<UserSessionEntity> findAllOrdered();
+
+	@Query("""
+        select s from UserSessionEntity s
         where s.revokedAt is null
           and s.lastActiveAt >= :since
           and (s.expiresAt is null or s.expiresAt > :now)
@@ -35,6 +41,20 @@ public interface UserSessionRepository extends JpaRepository<UserSessionEntity, 
           and (s.expiresAt is null or s.expiresAt > :now)
     """)
 	List<UserSessionEntity> findCurrentlyValid(
+			@Param("now") OffsetDateTime now
+	);
+
+	@Query("""
+        select count(s) > 0
+        from UserSessionEntity s
+        where s.id = :sessionId
+          and s.userId = :userId
+          and s.revokedAt is null
+          and (s.expiresAt is null or s.expiresAt > :now)
+    """)
+	boolean isValidSession(
+			@Param("sessionId") UUID sessionId,
+			@Param("userId") UUID userId,
 			@Param("now") OffsetDateTime now
 	);
 

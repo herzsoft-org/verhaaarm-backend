@@ -33,8 +33,39 @@ public class UserSessionService {
 		this.users = users;
 	}
 
+	@Transactional(readOnly = true)
+	public List<UserSessionDto> listAllAdmin() {
+		Map<UUID, moe.herz.verhaarmbackend.user.UserEntity> userMap = users.findAllWithRolesOrdered()
+				.stream()
+				.collect(Collectors.toMap(
+						moe.herz.verhaarmbackend.user.UserEntity::getId,
+						u -> u,
+						(a, b) -> a
+				));
+
+		return sessions.findAllOrdered()
+				.stream()
+				.map(s -> toDto(s, null, userMap.get(s.getUserId())))
+				.toList();
+	}
+
 	@Transactional
-	public UserSessionEntity createSession(UUID userId, SessionDeviceInfoRequest info) {
+	public void revokeAdmin(UUID sessionId) {
+		UserSessionEntity s = sessions.findById(sessionId)
+				.orElseThrow(() -> ApiErrors.notFound("Session not found"));
+
+		revokeSession(s);
+	}
+
+	@Transactional(readOnly = true)
+	public boolean isValidSession(UUID sessionId, UUID userId) {
+		if (sessionId == null || userId == null) return true;
+
+		return sessions.isValidSession(sessionId, userId, OffsetDateTime.now());
+	}
+
+	@Transactional
+	public UserSessionEntity createSession(UUID userId, SessionDeviceInfoRequest info, String ipAddress) {
 		UserSessionEntity s = new UserSessionEntity(
 				UUID.randomUUID(),
 				userId,
@@ -42,6 +73,7 @@ public class UserSessionService {
 		);
 
 		applyDeviceInfo(s, info);
+		s.setIpAddress(clean(ipAddress));
 		s.setLastActiveAt(OffsetDateTime.now());
 
 		UserSessionEntity saved = sessions.save(s);
@@ -51,7 +83,7 @@ public class UserSessionService {
 	}
 
 	@Transactional
-	public UserSessionEntity touch(UUID sessionId, UUID userId, SessionDeviceInfoRequest info) {
+	public UserSessionEntity touch(UUID sessionId, UUID userId, SessionDeviceInfoRequest info, String ipAddress) {
 		UserSessionEntity s = sessions.findById(sessionId)
 				.orElseThrow(() -> ApiErrors.unauthorized("Session not found"));
 
@@ -64,12 +96,26 @@ public class UserSessionService {
 		}
 
 		applyDeviceInfo(s, info);
+		String cleanedIp = clean(ipAddress);
+		if (cleanedIp != null) {
+			s.setIpAddress(cleanedIp);
+		}
 		s.setLastActiveAt(OffsetDateTime.now());
 
 		UserSessionEntity saved = sessions.save(s);
 		users.updateLastOnlineAt(userId, saved.getLastActiveAt());
 
 		return saved;
+	}
+
+	@Transactional
+	public UserSessionEntity createSession(UUID userId, SessionDeviceInfoRequest info) {
+		return createSession(userId, info, null);
+	}
+
+	@Transactional
+	public UserSessionEntity touch(UUID sessionId, UUID userId, SessionDeviceInfoRequest info) {
+		return touch(sessionId, userId, info, null);
 	}
 
 	@Transactional
@@ -240,9 +286,20 @@ public class UserSessionService {
 	}
 
 	private UserSessionDto toDto(UserSessionEntity s, UUID currentSessionId) {
+		moe.herz.verhaarmbackend.user.UserEntity user = users.findById(s.getUserId()).orElse(null);
+		return toDto(s, currentSessionId, user);
+	}
+
+	private UserSessionDto toDto(
+			UserSessionEntity s,
+			UUID currentSessionId,
+			moe.herz.verhaarmbackend.user.UserEntity user
+	) {
 		return new UserSessionDto(
 				s.getId(),
 				s.getUserId(),
+				user == null ? null : user.getUsername(),
+				user == null ? null : user.getDisplayName(),
 				s.getAppType() == null ? "UNKNOWN" : s.getAppType().name(),
 				s.getDeviceName(),
 				s.getDeviceModel(),
@@ -251,12 +308,23 @@ public class UserSessionService {
 				s.getBrowserName(),
 				s.getBrowserVersion(),
 				s.getUserAgent(),
+				s.getIpAddress(),
+				s.getCountryCode(),
 				s.getCreatedAt(),
 				s.getLastActiveAt(),
 				s.getExpiresAt(),
 				s.getRevokedAt(),
 				currentSessionId != null && currentSessionId.equals(s.getId())
 		);
+	}
+
+	private static String clean(String value) {
+		if (value == null) return null;
+
+		String trimmed = value.trim();
+		if (trimmed.isBlank()) return null;
+
+		return trimmed.length() > 500 ? trimmed.substring(0, 500) : trimmed;
 	}
 
 	private void applyDeviceInfo(UserSessionEntity s, SessionDeviceInfoRequest info) {

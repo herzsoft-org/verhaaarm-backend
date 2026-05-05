@@ -41,6 +41,12 @@ public class UserSessionEntity {
 	@Column(name = "user_agent")
 	private String userAgent;
 
+	@Column(name = "ip_address")
+	private String ipAddress;
+
+	@Column(name = "country_code")
+	private String countryCode;
+
 	@Column(name = "created_at", nullable = false)
 	private OffsetDateTime createdAt;
 
@@ -111,4 +117,10 @@ public class UserSessionEntity {
 
 	public OffsetDateTime getRevokedAt() { return revokedAt; }
 	public void setRevokedAt(OffsetDateTime revokedAt) { this.revokedAt = revokedAt; }
+
+	public String getIpAddress() { return ipAddress; }
+	public void setIpAddress(String ipAddress) { this.ipAddress = ipAddress; }
+
+	public String getCountryCode() { return countryCode; }
+	public void setCountryCode(String countryCode) { this.countryCode = countryCode; }
 }
