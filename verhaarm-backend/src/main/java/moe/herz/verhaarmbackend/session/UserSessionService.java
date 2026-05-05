@@ -22,15 +22,18 @@ public class UserSessionService {
 	private final UserSessionRepository sessions;
 	private final RefreshTokenRepository refreshTokens;
 	private final UserRepository users;
+	private final IpCountryService ipCountryService;
 
 	public UserSessionService(
 			UserSessionRepository sessions,
 			RefreshTokenRepository refreshTokens,
-			UserRepository users
+			UserRepository users,
+			IpCountryService ipCountryService
 	) {
 		this.sessions = sessions;
 		this.refreshTokens = refreshTokens;
 		this.users = users;
+		this.ipCountryService = ipCountryService;
 	}
 
 	@Transactional(readOnly = true)
@@ -73,7 +76,7 @@ public class UserSessionService {
 		);
 
 		applyDeviceInfo(s, info);
-		s.setIpAddress(clean(ipAddress));
+		applyIpAndCountry(s, ipAddress);
 		s.setLastActiveAt(OffsetDateTime.now());
 
 		UserSessionEntity saved = sessions.save(s);
@@ -96,10 +99,7 @@ public class UserSessionService {
 		}
 
 		applyDeviceInfo(s, info);
-		String cleanedIp = clean(ipAddress);
-		if (cleanedIp != null) {
-			s.setIpAddress(cleanedIp);
-		}
+		applyIpAndCountry(s, ipAddress);
 		s.setLastActiveAt(OffsetDateTime.now());
 
 		UserSessionEntity saved = sessions.save(s);
@@ -316,6 +316,27 @@ public class UserSessionService {
 				s.getRevokedAt(),
 				currentSessionId != null && currentSessionId.equals(s.getId())
 		);
+	}
+
+	private void applyIpAndCountry(UserSessionEntity s, String ipAddress) {
+		String cleanedIp = clean(ipAddress);
+		if (cleanedIp == null) return;
+
+		String previousIp = s.getIpAddress();
+
+		s.setIpAddress(cleanedIp);
+
+		if (!ipCountryService.isAvailable()) {
+			return;
+		}
+
+		// Only resolve again when the IP changed or no country was stored yet.
+		if (previousIp == null
+				|| !previousIp.equals(cleanedIp)
+				|| s.getCountryCode() == null
+				|| s.getCountryCode().isBlank()) {
+			s.setCountryCode(ipCountryService.countryCodeForIp(cleanedIp));
+		}
 	}
 
 	private static String clean(String value) {
