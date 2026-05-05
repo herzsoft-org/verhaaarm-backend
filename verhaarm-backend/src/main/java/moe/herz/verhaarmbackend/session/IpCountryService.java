@@ -38,7 +38,7 @@ public class IpCountryService {
 		}
 
 		try {
-			String isoCode = reader.country(address).getCountry().getIsoCode();
+			String isoCode = reader.country(address).country().isoCode();
 			if (isoCode == null || isoCode.isBlank()) return null;
 
 			String normalized = isoCode.trim().toUpperCase(Locale.ROOT);
