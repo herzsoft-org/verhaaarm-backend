@@ -3,7 +3,7 @@ package moe.herz.verhaarmbackend.user;
 public enum UserMemberStatus {
 	FUX,
 	SCHUELERFUX,
-	MILITAERFUX,
+	KONKNEIPANT,
 	BURSCH,
 	INAKTIVER,
 	PHILISTER;
