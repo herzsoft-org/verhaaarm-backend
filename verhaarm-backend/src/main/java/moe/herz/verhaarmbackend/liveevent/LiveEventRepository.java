@@ -24,4 +24,6 @@ public interface LiveEventRepository extends JpaRepository<LiveEventEntity, UUID
 		  and e.deletedAt is null
 	""")
 	Optional<LiveEventEntity> findVisibleById(UUID id);
+
+	boolean existsBySourceEventId(UUID sourceEventId);
 }
