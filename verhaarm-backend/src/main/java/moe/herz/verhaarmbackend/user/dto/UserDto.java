@@ -12,5 +12,6 @@ public record UserDto(
 		Set<String> roles,
 		String memberStatus,
 		boolean aktivitas,
-		OffsetDateTime lastOnlineAt
+		OffsetDateTime lastOnlineAt,
+		OffsetDateTime updatedAt
 ) {}

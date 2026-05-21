@@ -599,7 +599,8 @@ public class UserService {
 				roles,
 				status.name(),
 				status.isAktivitas(),
-				u.getLastOnlineAt()
+				u.getLastOnlineAt(),
+				u.getUpdatedAt()
 		);
 	}
 }
