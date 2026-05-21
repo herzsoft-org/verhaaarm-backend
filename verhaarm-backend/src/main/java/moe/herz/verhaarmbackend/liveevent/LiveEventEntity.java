@@ -25,6 +25,9 @@ public class LiveEventEntity {
 	@Column(name = "created_by_user_id", nullable = false)
 	private UUID createdByUserId;
 
+	@Column(name = "source_event_id")
+	private UUID sourceEventId;
+
 	@Column(name = "expires_at", nullable = false)
 	private OffsetDateTime expiresAt;
 
@@ -41,12 +44,21 @@ public class LiveEventEntity {
 		// JPA
 	}
 
-	public LiveEventEntity(UUID id, String title, String place, String description, UUID createdByUserId, OffsetDateTime expiresAt) {
+	public LiveEventEntity(
+			UUID id,
+			String title,
+			String place,
+			String description,
+			UUID createdByUserId,
+			UUID sourceEventId,
+			OffsetDateTime expiresAt
+	) {
 		this.id = id;
 		this.title = title;
 		this.place = place;
 		this.description = description;
 		this.createdByUserId = createdByUserId;
+		this.sourceEventId = sourceEventId;
 		this.expiresAt = expiresAt;
 	}
 
@@ -55,6 +67,7 @@ public class LiveEventEntity {
 	public String getPlace() { return place; }
 	public String getDescription() { return description; }
 	public UUID getCreatedByUserId() { return createdByUserId; }
+	public UUID getSourceEventId() { return sourceEventId; }
 	public OffsetDateTime getExpiresAt() { return expiresAt; }
 	public OffsetDateTime getDeletedAt() { return deletedAt; }
 	public OffsetDateTime getCreatedAt() { return createdAt; }
@@ -63,6 +76,7 @@ public class LiveEventEntity {
 	public void setTitle(String title) { this.title = title; }
 	public void setPlace(String place) { this.place = place; }
 	public void setDescription(String description) { this.description = description; }
+	public void setSourceEventId(UUID sourceEventId) { this.sourceEventId = sourceEventId; }
 	public void setExpiresAt(OffsetDateTime expiresAt) { this.expiresAt = expiresAt; }
 	public void setDeletedAt(OffsetDateTime deletedAt) { this.deletedAt = deletedAt; }
 
