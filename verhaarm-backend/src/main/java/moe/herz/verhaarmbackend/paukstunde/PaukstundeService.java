@@ -184,8 +184,8 @@ public class PaukstundeService {
 
 	private void requireCanModify(PaukstundeEntity p, UserEntity actor) {
 		if (actor == null || actor.getId() == null) throw ApiErrors.forbidden("Forbidden");
-		boolean isCreator = p.getCreatedByUserId().equals(actor.getId());
-		if (!(isCreator || isStaff(actor))) throw ApiErrors.forbidden("Forbidden");
+		boolean isParticipant = p.getParticipantUserIds().contains(actor.getId());
+		if (!(isParticipant || isStaff(actor))) throw ApiErrors.forbidden("Forbidden");
 	}
 
 	private void requireStaff(UserEntity actor) {
