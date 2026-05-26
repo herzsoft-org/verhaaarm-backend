@@ -60,6 +60,15 @@ public class GlobalExceptionHandler {
 		return ResponseEntity.status(ex.getStatusCode()).body(Map.of("error", reason));
 	}
 
+	@ExceptionHandler(ApiValidationException.class)
+	public ResponseEntity<?> handleApiValidation(ApiValidationException ex) {
+		Map<String, Object> body = new java.util.LinkedHashMap<>();
+		body.put("error", ex.getMessage());
+		body.put("code", ex.getCode());
+		body.putAll(ex.getDetails());
+		return ResponseEntity.status(ex.getStatus()).body(body);
+	}
+
 	@ExceptionHandler(MethodArgumentNotValidException.class)
 	public ResponseEntity<?> handleValidation(MethodArgumentNotValidException ex) {
 		return ResponseEntity.badRequest().body(Map.of(

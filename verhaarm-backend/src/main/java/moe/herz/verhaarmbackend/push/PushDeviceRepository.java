@@ -18,6 +18,18 @@ public interface PushDeviceRepository extends JpaRepository<PushDeviceEntity, UU
 	List<PushDeviceEntity> findAllForUser(@Param("userId") UUID userId);
 
 	@Query("""
+		select distinct d.userId from PushDeviceEntity d, UserEntity u
+		where u.id = d.userId
+		  and u.disabled = false
+		  and (
+		    (d.kind = moe.herz.verhaarmbackend.push.PushDeviceKind.FCM and d.fcmToken is not null and d.fcmToken <> '')
+		    or
+		    (d.kind = moe.herz.verhaarmbackend.push.PushDeviceKind.WEBPUSH and d.endpoint is not null and d.endpoint <> '' and d.p256dh is not null and d.p256dh <> '' and d.auth is not null and d.auth <> '')
+		  )
+	""")
+	List<UUID> findEnabledUserIdsWithValidPushDevice();
+
+	@Query("""
 		select d from PushDeviceEntity d
 		where d.kind = 'WEBPUSH'
 		  and d.endpoint = :endpoint

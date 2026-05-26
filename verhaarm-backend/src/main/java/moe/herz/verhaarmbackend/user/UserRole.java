@@ -4,6 +4,7 @@ public enum UserRole {
 	ADMIN,
 	SENIOR,
 	HOUSEKEEPING,
+	FECHTWART,
 	TREASURER,
 	MEMBER
 }

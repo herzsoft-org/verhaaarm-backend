@@ -1,8 +1,11 @@
 package moe.herz.verhaarmbackend.notification;
 
 import moe.herz.verhaarmbackend.common.ApiErrors;
+import moe.herz.verhaarmbackend.push.PushDeviceRepository;
 import moe.herz.verhaarmbackend.push.PushService;
 import moe.herz.verhaarmbackend.user.UserEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,10 +21,13 @@ public class NotificationService {
 
 	private final NotificationRepository notifications;
 	private final PushService push;
+	private final PushDeviceRepository pushDevices;
+	private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
 
-	public NotificationService(NotificationRepository notifications, PushService push) {
+	public NotificationService(NotificationRepository notifications, PushService push, PushDeviceRepository pushDevices) {
 		this.notifications = notifications;
 		this.push = push;
+		this.pushDevices = pushDevices;
 	}
 
 	public List<NotificationEntity> listMine(UserEntity actor, int limit) {
@@ -80,10 +86,10 @@ public class NotificationService {
 				type,
 				t,
 				b,
-				data
+				NotificationRouting.withRouting(type, data)
 		);
 
-		System.out.println("NOTIF createForUser userId=" + userId + " type=" + type + " title=" + t);
+		log.info("Notification createForUser userId={} type={} title={}", userId, type, t);
 		notifications.save(n);
 
 		// Send push only after DB commit succeeded
@@ -91,16 +97,35 @@ public class NotificationService {
 			TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
 				@Override
 				public void afterCommit() {
-					System.out.println("NOTIF afterCommit send notificationId=" + n.getId() + " userId=" + n.getUserId());
+					log.info("Notification afterCommit send notificationId={} userId={}", n.getId(), n.getUserId());
 					push.sendForNotification(n);
 				}
 			});
 		} else {
 			// no tx -> send immediately (should not normally happen)
-			System.out.println("NOTIF afterCommit send notificationId=" + n.getId() + " userId=" + n.getUserId());
+			log.info("Notification immediate send notificationId={} userId={}", n.getId(), n.getUserId());
 			push.sendForNotification(n);
 		}
 
 		return n;
+	}
+
+	@Transactional
+	public int createForEnabledUsersWithPush(
+			NotificationType type,
+			String title,
+			String body,
+			Map<String, Object> data
+	) {
+		int created = 0;
+		for (UUID userId : pushDevices.findEnabledUserIdsWithValidPushDevice()) {
+			try {
+				createForUser(userId, type, title, body, data);
+				created++;
+			} catch (Exception ex) {
+				log.warn("Failed to create notification type={} userId={}: {}", type, userId, ex.toString(), ex);
+			}
+		}
+		return created;
 	}
 }

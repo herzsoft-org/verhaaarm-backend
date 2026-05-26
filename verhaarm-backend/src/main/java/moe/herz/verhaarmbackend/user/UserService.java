@@ -4,9 +4,11 @@ import moe.herz.verhaarmbackend.attendance.AttendanceRepository;
 import moe.herz.verhaarmbackend.audit.AuditLogService;
 import moe.herz.verhaarmbackend.auth.RefreshTokenRepository;
 import moe.herz.verhaarmbackend.common.ApiErrors;
+import moe.herz.verhaarmbackend.common.StructuredApiError;
 import moe.herz.verhaarmbackend.fine.FineRepository;
 import moe.herz.verhaarmbackend.finephoto.FinePhotoService;
 import moe.herz.verhaarmbackend.period.ConventPeriodRepository;
+import moe.herz.verhaarmbackend.paukstunde.PaukstundeRepository;
 import moe.herz.verhaarmbackend.push.PushDeviceRepository;
 import moe.herz.verhaarmbackend.task.TaskAssigneeEntity;
 import moe.herz.verhaarmbackend.task.TaskAssigneeRepository;
@@ -44,6 +46,7 @@ public class UserService {
 	private final AttendanceRepository attendance;
 	private final UserRoleRepository userRoles;
 	private final FinePhotoService finePhotos;
+	private final PaukstundeRepository paukstunden;
 
 	private static final ZoneId ZONE_BERLIN = ZoneId.of("Europe/Berlin");
 
@@ -59,7 +62,8 @@ public class UserService {
 			TaskAssigneeRepository taskAssignees,
 			AttendanceRepository attendance,
 			UserRoleRepository userRoles,
-			FinePhotoService finePhotos
+			FinePhotoService finePhotos,
+			PaukstundeRepository paukstunden
 	) {
 		this.users = users;
 		this.fines = fines;
@@ -74,6 +78,7 @@ public class UserService {
 		this.attendance = attendance;
 		this.userRoles = userRoles;
 		this.finePhotos = finePhotos;
+		this.paukstunden = paukstunden;
 	}
 
 	// --------------------
@@ -211,7 +216,7 @@ public class UserService {
 			throw ApiErrors.badRequest("Username already exists");
 		}
 
-		Set<UserRole> newRoles = enforceSingleRole(parseRoles(req.roles()));
+		Set<UserRole> newRoles = normalizeRoles(parseRoles(req.roles()));
 		UserMemberStatus memberStatus = parseMemberStatusOrDefault(req.memberStatus());
 
 		validateRoleConstraintsOnChange(null, false, newRoles, false);
@@ -266,7 +271,7 @@ public class UserService {
 			Set<UserRole> parsed = parseRoles(req.roles());
 			newRoles = parsed.isEmpty() ? Set.of(UserRole.MEMBER) : parsed;
 		}
-		newRoles = enforceSingleRole(newRoles);
+		newRoles = normalizeRoles(newRoles);
 
 		// SENIOR cannot assign ADMIN
 		if (!actorIsAdmin && newRoles.contains(UserRole.ADMIN)) {
@@ -423,6 +428,7 @@ public class UserService {
 				throw ApiErrors.badRequest("Cannot delete last enabled ADMIN");
 			}
 		}
+		validateRoleConstraintsOnChange(target, target.isDisabled(), Set.of(), true);
 
 		// 1) Auth / push
 		refreshTokens.deleteAllForUser(targetUserId);
@@ -462,10 +468,19 @@ public class UserService {
 			fines.flush();
 		}
 
-		// 6) Roles: clean up before deleting user row
+		// 6) Paukstunden: remove owned entries and participant links
+		paukstunden.deleteCreatedByUser(targetUserId);
+		paukstunden.deleteParticipantsForUser(targetUserId);
+		List<UUID> orphanPaukstundeIds = paukstunden.findIdsWithNoParticipants();
+		if (!orphanPaukstundeIds.isEmpty()) {
+			paukstunden.deleteAllByIdInBatch(orphanPaukstundeIds);
+			paukstunden.flush();
+		}
+
+		// 7) Roles: clean up before deleting user row
 		userRoles.deleteAllForUser(targetUserId);
 
-		// 7) Finally delete the user
+		// 8) Finally delete the user
 		users.deleteById(targetUserId);
 		users.flush();
 
@@ -492,26 +507,31 @@ public class UserService {
 
 		long seniors = enabled.stream().filter(u -> hasRole(u, UserRole.SENIOR)).count();
 		long housekeeping = enabled.stream().filter(u -> hasRole(u, UserRole.HOUSEKEEPING)).count();
+		long fechtwart = enabled.stream().filter(u -> hasRole(u, UserRole.FECHTWART)).count();
 		long treasurer = enabled.stream().filter(u -> hasRole(u, UserRole.TREASURER)).count();
 
 		if (targetOrNull != null && !oldDisabled) {
 			if (hasRole(targetOrNull, UserRole.SENIOR)) seniors--;
 			if (hasRole(targetOrNull, UserRole.HOUSEKEEPING)) housekeeping--;
+			if (hasRole(targetOrNull, UserRole.FECHTWART)) fechtwart--;
 			if (hasRole(targetOrNull, UserRole.TREASURER)) treasurer--;
 		}
 
 		if (!newDisabled) {
 			if (newRoles.contains(UserRole.SENIOR)) seniors++;
 			if (newRoles.contains(UserRole.HOUSEKEEPING)) housekeeping++;
+			if (newRoles.contains(UserRole.FECHTWART)) fechtwart++;
 			if (newRoles.contains(UserRole.TREASURER)) treasurer++;
 		}
 
 		if (seniors < 1)
-			throw ApiErrors.badRequest("At least one SENIOR must exist (enabled users)");
+			throw requiredRoleMissing(UserRole.SENIOR);
 		if (housekeeping < 1)
-			throw ApiErrors.badRequest("At least one HOUSEKEEPING must exist (enabled users)");
+			throw requiredRoleMissing(UserRole.HOUSEKEEPING);
+		if (fechtwart < 1)
+			throw requiredRoleMissing(UserRole.FECHTWART);
 		if (treasurer < 1)
-			throw ApiErrors.badRequest("At least one TREASURER must exist (enabled users)");
+			throw requiredRoleMissing(UserRole.TREASURER);
 	}
 
 	// --------------------
@@ -539,18 +559,23 @@ public class UserService {
 		return out;
 	}
 
-	/**
-	 * Enforce "exactly one effective role" at the API boundary.
-	 *
-	 * Rules:
-	 *  - null/empty => MEMBER
-	 *  - size==1    => ok
-	 *  - size>1     => 400 (client must pick exactly one)
-	 */
-	private static Set<UserRole> enforceSingleRole(Set<UserRole> roles) {
+	private static Set<UserRole> normalizeRoles(Set<UserRole> roles) {
 		if (roles == null || roles.isEmpty()) return Set.of(UserRole.MEMBER);
-		if (roles.size() != 1) throw ApiErrors.badRequest("Exactly one role must be set");
-		return roles;
+		Set<UserRole> out = new HashSet<>(roles);
+		if (out.size() > 1) out.remove(UserRole.MEMBER);
+		return Set.copyOf(out);
+	}
+
+	private static RuntimeException requiredRoleMissing(UserRole role) {
+		String message = "You can't remove the only " + role.name() + ". Select another user to receive this role first.";
+		return StructuredApiError.badRequest(
+				"REQUIRED_ROLE_MISSING",
+				message,
+				StructuredApiError.details(
+						"role", role.name(),
+						"suggestedAction", "Select another enabled user to receive " + role.name() + " before removing it."
+				)
+		);
 	}
 
 	private static UserMemberStatus parseMemberStatusOrDefault(String raw) {

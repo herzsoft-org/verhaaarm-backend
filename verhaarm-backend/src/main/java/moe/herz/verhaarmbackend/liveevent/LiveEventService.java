@@ -7,6 +7,8 @@ import moe.herz.verhaarmbackend.event.EventRepository;
 import moe.herz.verhaarmbackend.liveevent.dto.CreateLiveEventRequest;
 import moe.herz.verhaarmbackend.liveevent.dto.LiveEventDto;
 import moe.herz.verhaarmbackend.liveevent.dto.UpdateLiveEventRequest;
+import moe.herz.verhaarmbackend.notification.NotificationService;
+import moe.herz.verhaarmbackend.notification.NotificationType;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserRole;
 import org.springframework.stereotype.Service;
@@ -29,6 +31,7 @@ public class LiveEventService {
 	private final LiveEventRepository liveEvents;
 	private final EventRepository events;
 	private final AuditLogService audit;
+	private final NotificationService notifications;
 
 	@PersistenceContext
 	private EntityManager em;
@@ -36,11 +39,13 @@ public class LiveEventService {
 	public LiveEventService(
 			LiveEventRepository liveEvents,
 			EventRepository events,
-			AuditLogService audit
+			AuditLogService audit,
+			NotificationService notifications
 	) {
 		this.liveEvents = liveEvents;
 		this.events = events;
 		this.audit = audit;
+		this.notifications = notifications;
 	}
 
 	@Transactional
@@ -97,6 +102,7 @@ public class LiveEventService {
 		audit.put(d, "description", reloaded.getDescription());
 		audit.put(d, "expiresAt", reloaded.getExpiresAt() == null ? null : reloaded.getExpiresAt().toString());
 		audit.log(actor, "liveEvent.create", d);
+		notifyLiveEventCreated(reloaded);
 
 		return toDto(reloaded);
 	}
@@ -201,6 +207,22 @@ public class LiveEventService {
 			audit.put(d, "description", liveEvent.getDescription());
 			audit.put(d, "expiresAt", liveEvent.getExpiresAt() == null ? null : liveEvent.getExpiresAt().toString());
 			audit.log(actor, "liveEvent.materializeFromEvent", d);
+			notifyLiveEventCreated(liveEvent);
+		}
+	}
+
+	private void notifyLiveEventCreated(LiveEventEntity e) {
+		try {
+			notifications.createForEnabledUsersWithPush(
+					NotificationType.LIVE_EVENT_CREATED,
+					"Neues Live-Event",
+					(e.getTitle() == null || e.getTitle().isBlank()) ? "Ein neues Live-Event wurde erstellt." : e.getTitle(),
+					java.util.Map.of("liveEventId", e.getId().toString())
+			);
+		} catch (Exception ex) {
+			// Notification delivery must not block live event creation.
+			org.slf4j.LoggerFactory.getLogger(LiveEventService.class)
+					.warn("Live event notification failed liveEventId={}: {}", e.getId(), ex.toString(), ex);
 		}
 	}
 

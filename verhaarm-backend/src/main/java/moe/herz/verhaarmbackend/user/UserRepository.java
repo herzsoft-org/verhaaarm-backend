@@ -3,8 +3,6 @@ package moe.herz.verhaarmbackend.user;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
-import org.springframework.data.jpa.repository.Modifying;
-import org.springframework.data.jpa.repository.Modifying;
 
 import java.util.List;
 import java.util.Optional;
@@ -68,6 +66,14 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     """)
 	long countEnabledAdmins();
 
+	@Query("""
+        select count(distinct u.id)
+        from UserEntity u
+        join u.roles r
+        where u.disabled = false and r.role = :role
+    """)
+	long countEnabledUsersWithRole(@Param("role") UserRole role);
+
 	// Option A: role check without touching a possibly-detached entity
 	@Query("""
         select count(r) > 0
@@ -89,6 +95,13 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
       and u.disabled = false
 	""")
 	List<UserEntity> findAllEnabledByIdIn(@Param("ids") Collection<UUID> ids);
+
+	@Query("""
+    select distinct u from UserEntity u
+    left join fetch u.roles r
+    where u.disabled = false
+	""")
+	List<UserEntity> findAllEnabledUsersWithRoles();
 
 	@Query("""
     select distinct u from UserEntity u
