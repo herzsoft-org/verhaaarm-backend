@@ -43,4 +43,16 @@ class NotificationRoutingTest {
 		assertEquals("ACTIONS_BEIHAENGUNG", data.get("clickTarget"));
 		assertEquals("fine-id", data.get("fineId"));
 	}
+
+	@Test
+	void fineSuggestionRoutesToFineSuggestions() {
+		Map<String, Object> data = NotificationRouting.withRouting(
+				NotificationType.FINE_SUGGESTION_CREATED,
+				Map.of("suggestionId", "suggestion-id")
+		);
+
+		assertEquals("FINE_SUGGESTION_CREATED", data.get("notificationType"));
+		assertEquals("FINE_SUGGESTIONS", data.get("clickTarget"));
+		assertEquals("suggestion-id", data.get("suggestionId"));
+	}
 }

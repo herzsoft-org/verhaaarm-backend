@@ -215,7 +215,7 @@ public class LiveEventService {
 		try {
 			notifications.createForEnabledUsersWithPush(
 					NotificationType.LIVE_EVENT_CREATED,
-					"Neues Live-Event",
+					"Das geht gerade:",
 					(e.getTitle() == null || e.getTitle().isBlank()) ? "Ein neues Live-Event wurde erstellt." : e.getTitle(),
 					java.util.Map.of("liveEventId", e.getId().toString())
 			);

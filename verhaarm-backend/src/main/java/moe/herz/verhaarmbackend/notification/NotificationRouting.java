@@ -28,6 +28,7 @@ public final class NotificationRouting {
 			case LIVE_EVENT_CREATED -> NotificationClickTarget.HOME_LIVE_EVENTS;
 			case TASK_ASSIGNED -> NotificationClickTarget.ACTIONS_ARBEITSAUFTRAEGE;
 			case FINE_CREATED -> NotificationClickTarget.ACTIONS_BEIHAENGUNG;
+			case FINE_SUGGESTION_CREATED -> NotificationClickTarget.FINE_SUGGESTIONS;
 		};
 	}
 }

@@ -13,14 +13,20 @@ import moe.herz.verhaarmbackend.finesuggestion.dto.UpdateFineSuggestionRequest;
 import moe.herz.verhaarmbackend.finesuggestionphoto.FineSuggestionPhotoService;
 import moe.herz.verhaarmbackend.finecatalog.FineCatalogItemEntity;
 import moe.herz.verhaarmbackend.finecatalog.FineCatalogRepository;
+import moe.herz.verhaarmbackend.notification.NotificationService;
+import moe.herz.verhaarmbackend.notification.NotificationType;
 import moe.herz.verhaarmbackend.user.UserEntity;
+import moe.herz.verhaarmbackend.user.UserRepository;
 import moe.herz.verhaarmbackend.user.UserRole;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -32,6 +38,8 @@ public class FineSuggestionService {
 	private final FineCatalogRepository catalog;
 	private final AuditLogService audit;
 	private final FineSuggestionPhotoService suggestionPhotos;
+	private final UserRepository users;
+	private final NotificationService notifications;
 
 	@PersistenceContext
 	private EntityManager em;
@@ -41,13 +49,17 @@ public class FineSuggestionService {
 			FineRepository fines,
 			FineCatalogRepository catalog,
 			AuditLogService audit,
-			FineSuggestionPhotoService suggestionPhotos
+			FineSuggestionPhotoService suggestionPhotos,
+			UserRepository users,
+			NotificationService notifications
 	) {
 		this.suggestions = suggestions;
 		this.fines = fines;
 		this.catalog = catalog;
 		this.audit = audit;
 		this.suggestionPhotos = suggestionPhotos;
+		this.users = users;
+		this.notifications = notifications;
 	}
 
 	@Transactional(readOnly = true)
@@ -146,6 +158,8 @@ public class FineSuggestionService {
 
 		FineSuggestionEntity reloaded = suggestions.findVisibleById(s.getId())
 				.orElseThrow(() -> ApiErrors.notFound("Fine suggestion not found"));
+
+		notifyStaffAboutNewSuggestion(reloaded);
 
 		return toDto(reloaded);
 	}
@@ -364,6 +378,29 @@ public class FineSuggestionService {
 
 	private static boolean canManageSuggestion(UserEntity actor, FineSuggestionEntity s) {
 		return isStaff(actor) || isCreator(actor, s);
+	}
+
+	private void notifyStaffAboutNewSuggestion(FineSuggestionEntity suggestion) {
+		Map<String, Object> data = new HashMap<>();
+		data.put("suggestionId", suggestion.getId().toString());
+		if (suggestion.getFineDate() != null) data.put("fineDate", suggestion.getFineDate().toString());
+
+		Set<UUID> recipientIds = new LinkedHashSet<>();
+		for (UserEntity user : users.findAllEnabledUsersWithRoles()) {
+			if (hasRole(user, UserRole.SENIOR) || hasRole(user, UserRole.HOUSEKEEPING)) {
+				recipientIds.add(user.getId());
+			}
+		}
+
+		for (UUID userId : recipientIds) {
+			notifications.createForUser(
+					userId,
+					NotificationType.FINE_SUGGESTION_CREATED,
+					"Neue vorgeschlagene Beihängung",
+					"Es wurde eine neue Beihängung vorgeschlagen.",
+					data
+			);
+		}
 	}
 
 	private FineSuggestionDto toDto(FineSuggestionEntity s) {
