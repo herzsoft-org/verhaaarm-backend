@@ -50,6 +50,7 @@ public class PaukstundeService {
 		if (actor == null || actor.getId() == null) throw ApiErrors.forbidden("Forbidden");
 
 		Set<UUID> participantIds = normalizeIds(req.participantUserIds());
+		requireActorParticipantForNonStaff(actor, participantIds);
 		List<UserEntity> participants = users.findAllEnabledByIdIn(participantIds);
 		PaukstundeValidator.validate(req.date(), req.hours(), participantIds, participants);
 
@@ -138,6 +139,7 @@ public class PaukstundeService {
 		LocalDate date = req.date() != null ? req.date() : p.getDate();
 		Integer hours = req.hours() != null ? req.hours() : p.getHours();
 		Set<UUID> participantIds = req.participantUserIds() != null ? normalizeIds(req.participantUserIds()) : Set.copyOf(p.getParticipantUserIds());
+		requireActorParticipantForNonStaff(actor, participantIds);
 		List<UserEntity> participants = users.findAllEnabledByIdIn(participantIds);
 
 		PaukstundeValidator.validate(date, hours, participantIds, participants);
@@ -188,6 +190,13 @@ public class PaukstundeService {
 		if (!(isParticipant || isStaff(actor))) throw ApiErrors.forbidden("Forbidden");
 	}
 
+	private void requireActorParticipantForNonStaff(UserEntity actor, Set<UUID> participantIds) {
+		if (actor == null || actor.getId() == null) throw ApiErrors.forbidden("Forbidden");
+		if (!isStaff(actor) && !participantIds.contains(actor.getId())) {
+			throw ApiErrors.forbidden("Non-staff users must be participants");
+		}
+	}
+
 	private void requireStaff(UserEntity actor) {
 		if (!isStaff(actor)) throw ApiErrors.forbidden("Forbidden");
 	}
@@ -196,7 +205,6 @@ public class PaukstundeService {
 		return actor != null && (
 				hasRole(actor, UserRole.ADMIN) ||
 				hasRole(actor, UserRole.SENIOR) ||
-				hasRole(actor, UserRole.HOUSEKEEPING) ||
 				hasRole(actor, UserRole.FECHTWART)
 		);
 	}

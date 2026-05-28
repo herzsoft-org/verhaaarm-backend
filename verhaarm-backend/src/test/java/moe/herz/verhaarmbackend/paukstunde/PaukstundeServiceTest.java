@@ -56,6 +56,24 @@ class PaukstundeServiceTest {
 	}
 
 	@Test
+	void housekeepingUsesParticipantScopedCurrentConventsperiodeSessions() {
+		UserEntity housekeeping = user(UserMemberStatus.BURSCH, UserRole.HOUSEKEEPING);
+		PaukstundeEntity session = session(user(UserMemberStatus.BURSCH).getId(), housekeeping.getId());
+		LocalDate from = LocalDate.now().minusDays(1);
+		LocalDate to = LocalDate.now().plusDays(1);
+		when(periods.findCovering(any())).thenReturn(Optional.of(new ConventPeriodEntity(UUID.randomUUID(), "SS26", from, to, false)));
+		when(paukstunden.findForParticipantInDateRange(housekeeping.getId(), from, to)).thenReturn(List.of(session));
+		when(users.findAllById(anySet())).thenReturn(List.of(housekeeping));
+
+		var result = service.listCurrentConventsperiode(housekeeping);
+
+		assertEquals(1, result.size());
+		assertEquals(session.getId(), result.getFirst().id());
+		verify(paukstunden).findForParticipantInDateRange(housekeeping.getId(), from, to);
+		verify(paukstunden, never()).findInDateRangeWithParticipants(any(), any());
+	}
+
+	@Test
 	void linkedUserCanUpdateSession() {
 		UserEntity participant = user(UserMemberStatus.BURSCH);
 		UserEntity creator = user(UserMemberStatus.BURSCH);
@@ -83,6 +101,23 @@ class PaukstundeServiceTest {
 	}
 
 	@Test
+	void linkedUserCannotUpdateSessionToExcludeSelf() {
+		UserEntity participant = user(UserMemberStatus.BURSCH);
+		UserEntity other = user(UserMemberStatus.BURSCH);
+		PaukstundeEntity session = session(user(UserMemberStatus.BURSCH).getId(), participant.getId());
+		when(paukstunden.findById(session.getId())).thenReturn(Optional.of(session));
+
+		ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> service.update(
+				session.getId(),
+				new UpdatePaukstundeRequest(null, 2, Set.of(other.getId())),
+				participant
+		));
+
+		assertEquals(HttpStatus.FORBIDDEN, ex.getStatusCode());
+		verify(paukstunden, never()).save(any());
+	}
+
+	@Test
 	void unlinkedUserCannotUpdateOrDeleteSession() {
 		UserEntity unlinked = user(UserMemberStatus.BURSCH);
 		PaukstundeEntity session = session(user(UserMemberStatus.BURSCH).getId(), user(UserMemberStatus.BURSCH).getId());
@@ -94,6 +129,24 @@ class PaukstundeServiceTest {
 				unlinked
 		));
 		ResponseStatusException deleteEx = assertThrows(ResponseStatusException.class, () -> service.delete(session.getId(), unlinked));
+		assertEquals(HttpStatus.FORBIDDEN, updateEx.getStatusCode());
+		assertEquals(HttpStatus.FORBIDDEN, deleteEx.getStatusCode());
+		verify(paukstunden, never()).save(any());
+		verify(paukstunden, never()).delete(any());
+	}
+
+	@Test
+	void housekeepingCannotUpdateOrDeleteUnlinkedSession() {
+		UserEntity housekeeping = user(UserMemberStatus.BURSCH, UserRole.HOUSEKEEPING);
+		PaukstundeEntity session = session(user(UserMemberStatus.BURSCH).getId(), user(UserMemberStatus.BURSCH).getId());
+		when(paukstunden.findById(session.getId())).thenReturn(Optional.of(session));
+
+		ResponseStatusException updateEx = assertThrows(ResponseStatusException.class, () -> service.update(
+				session.getId(),
+				new UpdatePaukstundeRequest(null, 2, null),
+				housekeeping
+		));
+		ResponseStatusException deleteEx = assertThrows(ResponseStatusException.class, () -> service.delete(session.getId(), housekeeping));
 		assertEquals(HttpStatus.FORBIDDEN, updateEx.getStatusCode());
 		assertEquals(HttpStatus.FORBIDDEN, deleteEx.getStatusCode());
 		verify(paukstunden, never()).save(any());
@@ -162,6 +215,21 @@ class PaukstundeServiceTest {
 		));
 
 		assertEquals("PAUKSTUNDE_HOURS_INVALID", ex.getCode());
+		verify(paukstunden, never()).save(any());
+	}
+
+	@Test
+	void normalUserCannotCreateSessionWithoutSelfAsParticipant() {
+		UserEntity actor = user(UserMemberStatus.BURSCH);
+		UserEntity other = user(UserMemberStatus.BURSCH);
+
+		ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> service.create(
+				new CreatePaukstundeRequest(LocalDate.now(), 1, Set.of(other.getId())),
+				actor
+		));
+
+		assertEquals(HttpStatus.FORBIDDEN, ex.getStatusCode());
+		verify(users, never()).findAllEnabledByIdIn(anySet());
 		verify(paukstunden, never()).save(any());
 	}
 
