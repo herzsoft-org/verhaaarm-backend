@@ -20,5 +20,6 @@ public record CreateTaskRequest(
 		// For weekly recurring tasks:
 		Boolean recurringEnabled,
 		List<String> recurringWeekdays, // e.g. ["MON","WED","FRI"]
-		LocalTime recurringDueTime       // due time (Berlin local)
+		LocalTime recurringDueTime,      // due time (Berlin local)
+		Boolean notifyOnlyMe
 ) {}

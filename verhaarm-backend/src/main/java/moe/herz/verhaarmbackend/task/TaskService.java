@@ -68,6 +68,7 @@ public class TaskService {
 	@Transactional
 	public TaskDto create(CreateTaskRequest req, UserEntity actor) {
 		if (actor == null) throw ApiErrors.forbidden("Forbidden");
+		boolean notifyOnlyMe = requireNotifyOnlyMeAllowed(req.notifyOnlyMe(), actor);
 
 		String title = req.title() == null ? "" : req.title().trim();
 		if (title.isBlank()) throw ApiErrors.badRequest("Title required");
@@ -137,7 +138,8 @@ public class TaskService {
 		// NOTIFICATIONS (one per assignee)
 		String nTitle = "Neuer Arbeitsauftrag";
 		String nBody = reloaded.getTitle();
-		for (UUID assigneeId : uniqueAssigneeIds) {
+		List<UUID> notificationRecipients = notifyOnlyMe ? List.of(actor.getId()) : uniqueAssigneeIds;
+		for (UUID assigneeId : notificationRecipients) {
 			notifications.createForUser(
 					assigneeId,
 					NotificationType.TASK_ASSIGNED,
@@ -148,6 +150,14 @@ public class TaskService {
 		}
 
 		return toDto(reloaded);
+	}
+
+	private boolean requireNotifyOnlyMeAllowed(Boolean notifyOnlyMe, UserEntity actor) {
+		boolean enabled = Boolean.TRUE.equals(notifyOnlyMe);
+		if (enabled && !users.hasRole(actor.getId(), UserRole.ADMIN)) {
+			throw ApiErrors.forbidden("notifyOnlyMe requires ADMIN");
+		}
+		return enabled;
 	}
 
 	@Transactional

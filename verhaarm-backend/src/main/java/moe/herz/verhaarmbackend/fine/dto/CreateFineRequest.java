@@ -11,5 +11,6 @@ public record CreateFineRequest(
 		UUID catalogItemId,
 		String reason,
 		Integer amountCents,
-		@NotNull Set<UUID> targetUserIds
+		@NotNull Set<UUID> targetUserIds,
+		Boolean notifyOnlyMe
 ) {}

@@ -68,6 +68,8 @@ public class FineService {
 
 	@Transactional
 	public FineDto create(CreateFineRequest req, UserEntity actor) {
+		boolean notifyOnlyMe = requireNotifyOnlyMeAllowed(req.notifyOnlyMe(), actor);
+
 		if (!(hasRole(actor, UserRole.ADMIN) || hasRole(actor, UserRole.SENIOR) || hasRole(actor, UserRole.HOUSEKEEPING))) {
 			throw ApiErrors.forbidden("Forbidden");
 		}
@@ -161,7 +163,8 @@ public class FineService {
 
 		String title = "Neue Beihängung";
 		String body = reloaded.getReason() + " – " + formatEurFromCents(reloaded.getAmountCents());
-		for (UUID targetId : reloaded.getTargetUserIds()) {
+		Collection<UUID> notificationRecipients = notifyOnlyMe ? List.of(actor.getId()) : reloaded.getTargetUserIds();
+		for (UUID targetId : notificationRecipients) {
 			notifications.createForUser(
 					targetId,
 					NotificationType.FINE_CREATED,
@@ -173,6 +176,14 @@ public class FineService {
 		}
 
 		return toDto(reloaded);
+	}
+
+	private static boolean requireNotifyOnlyMeAllowed(Boolean notifyOnlyMe, UserEntity actor) {
+		boolean enabled = Boolean.TRUE.equals(notifyOnlyMe);
+		if (enabled && (actor == null || !hasRole(actor, UserRole.ADMIN))) {
+			throw ApiErrors.forbidden("notifyOnlyMe requires ADMIN");
+		}
+		return enabled;
 	}
 
 	@Transactional

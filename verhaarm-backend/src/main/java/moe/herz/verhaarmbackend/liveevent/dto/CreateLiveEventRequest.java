@@ -5,5 +5,6 @@ import jakarta.validation.constraints.NotBlank;
 public record CreateLiveEventRequest(
 		@NotBlank String title,
 		@NotBlank String place,
-		@NotBlank String description
+		@NotBlank String description,
+		Boolean notifyOnlyMe
 ) {}

@@ -73,6 +73,8 @@ public class LiveEventService {
 
 	@Transactional
 	public LiveEventDto create(CreateLiveEventRequest req, UserEntity actor) {
+		boolean notifyOnlyMe = requireNotifyOnlyMeAllowed(req.notifyOnlyMe(), actor);
+
 		String title = req.title() == null ? "" : req.title().trim();
 		String place = req.place() == null ? "" : req.place().trim();
 		String description = req.description() == null ? "" : req.description().trim();
@@ -108,7 +110,7 @@ public class LiveEventService {
 		audit.put(d, "description", reloaded.getDescription());
 		audit.put(d, "expiresAt", reloaded.getExpiresAt() == null ? null : reloaded.getExpiresAt().toString());
 		audit.log(actor, "liveEvent.create", d);
-		notifyLiveEventCreated(reloaded);
+		notifyLiveEventCreated(reloaded, notifyOnlyMe ? actor.getId() : null);
 
 		return toDto(reloaded, actor, true);
 	}
@@ -229,29 +231,40 @@ public class LiveEventService {
 			audit.put(d, "description", liveEvent.getDescription());
 			audit.put(d, "expiresAt", liveEvent.getExpiresAt() == null ? null : liveEvent.getExpiresAt().toString());
 			audit.log(actor, "liveEvent.materializeFromEvent", d);
-			notifyLiveEventCreated(liveEvent);
+			notifyLiveEventCreated(liveEvent, null);
 		}
 	}
 
-	private void notifyLiveEventCreated(LiveEventEntity e) {
+	private void notifyLiveEventCreated(LiveEventEntity e, UUID recipientUserId) {
 		try {
-			notifications.createForEnabledUsersWithPush(
-					NotificationType.LIVE_EVENT_CREATED,
-					"Das geht gerade:",
-					(e.getTitle() == null || e.getTitle().isBlank()) ? "Ein neues Live-Event wurde erstellt." : e.getTitle(),
-					java.util.Map.of(
-							"liveEventId", e.getId().toString(),
-							"supportsActions", "true",
-							"actionSet", "LIVE_EVENT_REACTIONS",
-							"reactionEndpoint", "/live-events/" + e.getId() + "/reactions/{type}",
-							"reactionTypes", "PROST,ICH_KOMME"
-					)
+			NotificationType type = NotificationType.LIVE_EVENT_CREATED;
+			String title = "Das geht gerade:";
+			String body = (e.getTitle() == null || e.getTitle().isBlank()) ? "Ein neues Live-Event wurde erstellt." : e.getTitle();
+			var data = java.util.Map.<String, Object>of(
+					"liveEventId", e.getId().toString(),
+					"supportsActions", "true",
+					"actionSet", "LIVE_EVENT_REACTIONS",
+					"reactionEndpoint", "/live-events/" + e.getId() + "/reactions/{type}",
+					"reactionTypes", "PROST,ICH_KOMME"
 			);
+			if (recipientUserId == null) {
+				notifications.createForEnabledUsersWithPush(type, title, body, data);
+			} else {
+				notifications.createForUser(recipientUserId, type, title, body, data);
+			}
 		} catch (Exception ex) {
 			// Notification delivery must not block live event creation.
 			org.slf4j.LoggerFactory.getLogger(LiveEventService.class)
 					.warn("Live event notification failed liveEventId={}: {}", e.getId(), ex.toString(), ex);
 		}
+	}
+
+	private static boolean requireNotifyOnlyMeAllowed(Boolean notifyOnlyMe, UserEntity actor) {
+		boolean enabled = Boolean.TRUE.equals(notifyOnlyMe);
+		if (enabled && (actor == null || !hasRole(actor, UserRole.ADMIN))) {
+			throw ApiErrors.forbidden("notifyOnlyMe requires ADMIN");
+		}
+		return enabled;
 	}
 
 	private void requireCanModify(LiveEventEntity e, UserEntity actor) {

@@ -16,7 +16,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -173,7 +175,7 @@ class LiveEventServiceTest {
 		});
 		when(liveEvents.findById(any(UUID.class))).thenAnswer(invocation -> Optional.of(saved.get()));
 
-		service.create(new CreateLiveEventRequest("Titel", "Ort", "Text"), actor);
+		service.create(new CreateLiveEventRequest("Titel", "Ort", "Text", null), actor);
 
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<Map<String, Object>> dataCaptor = ArgumentCaptor.forClass(Map.class);
@@ -190,6 +192,70 @@ class LiveEventServiceTest {
 		assertEquals("LIVE_EVENT_REACTIONS", data.get("actionSet"));
 		assertEquals("/live-events/" + saved.get().getId() + "/reactions/{type}", data.get("reactionEndpoint"));
 		assertEquals("PROST,ICH_KOMME", data.get("reactionTypes"));
+	}
+
+	@Test
+	void createWithNotifyOnlyMeFalseUsesNormalRecipients() {
+		UserEntity actor = user(UserRole.ADMIN);
+		AtomicReference<LiveEventEntity> saved = stubCreateReload();
+
+		service.create(new CreateLiveEventRequest("Titel", "Ort", "Text", false), actor);
+
+		verify(notifications).createForEnabledUsersWithPush(
+				eq(NotificationType.LIVE_EVENT_CREATED),
+				eq("Das geht gerade:"),
+				eq("Titel"),
+				anyMap()
+		);
+		verify(notifications, never()).createForUser(eq(actor.getId()), any(), any(), any(), anyMap());
+		assertNotNull(saved.get());
+	}
+
+	@Test
+	void adminCanCreateLiveEventAndNotifyOnlySelf() {
+		UserEntity actor = user(UserRole.ADMIN);
+		AtomicReference<LiveEventEntity> saved = stubCreateReload();
+
+		service.create(new CreateLiveEventRequest("Titel", "Ort", "Text", true), actor);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, Object>> dataCaptor = ArgumentCaptor.forClass(Map.class);
+		verify(notifications).createForUser(
+				eq(actor.getId()),
+				eq(NotificationType.LIVE_EVENT_CREATED),
+				eq("Das geht gerade:"),
+				eq("Titel"),
+				dataCaptor.capture()
+		);
+		verify(notifications, never()).createForEnabledUsersWithPush(any(), any(), any(), anyMap());
+		assertEquals(saved.get().getId().toString(), dataCaptor.getValue().get("liveEventId"));
+		assertEquals("LIVE_EVENT_REACTIONS", dataCaptor.getValue().get("actionSet"));
+	}
+
+	@Test
+	void nonAdminCannotUseLiveEventNotifyOnlyMe() {
+		UserEntity actor = user(UserRole.MEMBER);
+
+		ResponseStatusException ex = assertThrows(
+				ResponseStatusException.class,
+				() -> service.create(new CreateLiveEventRequest("Titel", "Ort", "Text", true), actor)
+		);
+
+		assertEquals(HttpStatus.FORBIDDEN, ex.getStatusCode());
+		assertEquals("notifyOnlyMe requires ADMIN", ex.getReason());
+		verify(liveEvents, never()).save(any());
+		verifyNoInteractions(notifications);
+	}
+
+	private AtomicReference<LiveEventEntity> stubCreateReload() {
+		AtomicReference<LiveEventEntity> saved = new AtomicReference<>();
+		when(liveEvents.save(any(LiveEventEntity.class))).thenAnswer(invocation -> {
+			LiveEventEntity event = invocation.getArgument(0);
+			saved.set(event);
+			return event;
+		});
+		when(liveEvents.findById(any(UUID.class))).thenAnswer(invocation -> Optional.of(saved.get()));
+		return saved;
 	}
 
 	private static LiveEventEntity liveEvent(UUID creatorId) {
