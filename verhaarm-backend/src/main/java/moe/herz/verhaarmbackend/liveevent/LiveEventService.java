@@ -6,6 +6,9 @@ import moe.herz.verhaarmbackend.event.EventEntity;
 import moe.herz.verhaarmbackend.event.EventRepository;
 import moe.herz.verhaarmbackend.liveevent.dto.CreateLiveEventRequest;
 import moe.herz.verhaarmbackend.liveevent.dto.LiveEventDto;
+import moe.herz.verhaarmbackend.liveevent.dto.LiveEventReactionSummaryDto;
+import moe.herz.verhaarmbackend.liveevent.dto.LiveEventReactionUserDto;
+import moe.herz.verhaarmbackend.liveevent.dto.LiveEventReactionUsersDto;
 import moe.herz.verhaarmbackend.liveevent.dto.UpdateLiveEventRequest;
 import moe.herz.verhaarmbackend.notification.NotificationService;
 import moe.herz.verhaarmbackend.notification.NotificationType;
@@ -30,6 +33,7 @@ public class LiveEventService {
 
 	private final LiveEventRepository liveEvents;
 	private final EventRepository events;
+	private final LiveEventReactionRepository reactions;
 	private final AuditLogService audit;
 	private final NotificationService notifications;
 
@@ -39,11 +43,13 @@ public class LiveEventService {
 	public LiveEventService(
 			LiveEventRepository liveEvents,
 			EventRepository events,
+			LiveEventReactionRepository reactions,
 			AuditLogService audit,
 			NotificationService notifications
 	) {
 		this.liveEvents = liveEvents;
 		this.events = events;
+		this.reactions = reactions;
 		this.audit = audit;
 		this.notifications = notifications;
 	}
@@ -54,7 +60,7 @@ public class LiveEventService {
 
 		return liveEvents.findActiveVisible(OffsetDateTime.now())
 				.stream()
-				.map(this::toDto)
+				.map(e -> toDto(e, actor, false))
 				.toList();
 	}
 
@@ -62,7 +68,7 @@ public class LiveEventService {
 	public LiveEventDto getVisible(UUID id, UserEntity actor) {
 		var e = liveEvents.findVisibleById(id).orElseThrow(() -> ApiErrors.notFound("Live event not found"));
 		if (!e.getExpiresAt().isAfter(OffsetDateTime.now())) throw ApiErrors.notFound("Live event not found");
-		return toDto(e);
+		return toDto(e, actor, true);
 	}
 
 	@Transactional
@@ -104,7 +110,7 @@ public class LiveEventService {
 		audit.log(actor, "liveEvent.create", d);
 		notifyLiveEventCreated(reloaded);
 
-		return toDto(reloaded);
+		return toDto(reloaded, actor, true);
 	}
 
 	@Transactional
@@ -155,7 +161,23 @@ public class LiveEventService {
 
 		audit.log(actor, "liveEvent.update", d);
 
-		return toDto(e);
+		return toDto(e, actor, true);
+	}
+
+	@Transactional
+	public LiveEventReactionSummaryDto toggleReaction(UUID id, LiveEventReactionType type, UserEntity actor) {
+		if (actor == null) throw ApiErrors.forbidden("Forbidden");
+		var e = liveEvents.findVisibleById(id).orElseThrow(() -> ApiErrors.notFound("Live event not found"));
+		if (!e.getExpiresAt().isAfter(OffsetDateTime.now())) throw ApiErrors.notFound("Live event not found");
+
+		var existing = reactions.findByLiveEventIdAndUserIdAndType(e.getId(), actor.getId(), type);
+		if (existing.isPresent()) {
+			reactions.delete(existing.get());
+		} else {
+			reactions.save(new LiveEventReactionEntity(UUID.randomUUID(), e.getId(), actor.getId(), type));
+		}
+
+		return reactionSummary(e.getId(), actor);
 	}
 
 	@Transactional
@@ -217,7 +239,13 @@ public class LiveEventService {
 					NotificationType.LIVE_EVENT_CREATED,
 					"Das geht gerade:",
 					(e.getTitle() == null || e.getTitle().isBlank()) ? "Ein neues Live-Event wurde erstellt." : e.getTitle(),
-					java.util.Map.of("liveEventId", e.getId().toString())
+					java.util.Map.of(
+							"liveEventId", e.getId().toString(),
+							"supportsActions", "true",
+							"actionSet", "LIVE_EVENT_REACTIONS",
+							"reactionEndpoint", "/live-events/" + e.getId() + "/reactions/{type}",
+							"reactionTypes", "PROST,ICH_KOMME"
+					)
 			);
 		} catch (Exception ex) {
 			// Notification delivery must not block live event creation.
@@ -242,7 +270,7 @@ public class LiveEventService {
 		return u.getRoles().stream().anyMatch(r -> r.getRole() == role);
 	}
 
-	private LiveEventDto toDto(LiveEventEntity e) {
+	private LiveEventDto toDto(LiveEventEntity e, UserEntity actor, boolean includeReactionUsers) {
 		return new LiveEventDto(
 				e.getId(),
 				e.getTitle(),
@@ -250,7 +278,33 @@ public class LiveEventService {
 				e.getDescription(),
 				e.getCreatedByUserId(),
 				e.getCreatedAt(),
-				e.getExpiresAt()
+				e.getExpiresAt(),
+				reactionSummary(e.getId(), actor),
+				includeReactionUsers ? reactionUsers(e.getId()) : null
 		);
+	}
+
+	private LiveEventReactionSummaryDto reactionSummary(UUID liveEventId, UserEntity actor) {
+		UUID actorId = actor == null ? null : actor.getId();
+		return new LiveEventReactionSummaryDto(
+				reactions.countByLiveEventIdAndType(liveEventId, LiveEventReactionType.PROST),
+				reactions.countByLiveEventIdAndType(liveEventId, LiveEventReactionType.ICH_KOMME),
+				actorId != null && reactions.existsByLiveEventIdAndUserIdAndType(liveEventId, actorId, LiveEventReactionType.PROST),
+				actorId != null && reactions.existsByLiveEventIdAndUserIdAndType(liveEventId, actorId, LiveEventReactionType.ICH_KOMME)
+		);
+	}
+
+	private LiveEventReactionUsersDto reactionUsers(UUID liveEventId) {
+		return new LiveEventReactionUsersDto(
+				reactionUsers(liveEventId, LiveEventReactionType.PROST),
+				reactionUsers(liveEventId, LiveEventReactionType.ICH_KOMME)
+		);
+	}
+
+	private List<LiveEventReactionUserDto> reactionUsers(UUID liveEventId, LiveEventReactionType type) {
+		return reactions.findUsersByLiveEventIdAndType(liveEventId, type)
+				.stream()
+				.map(u -> new LiveEventReactionUserDto(u.getId(), u.getDisplayName()))
+				.toList();
 	}
 }

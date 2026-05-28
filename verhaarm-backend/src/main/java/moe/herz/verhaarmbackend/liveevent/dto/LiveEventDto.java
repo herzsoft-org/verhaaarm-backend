@@ -10,5 +10,7 @@ public record LiveEventDto(
 		String description,
 		UUID createdByUserId,
 		OffsetDateTime createdAt,
-		OffsetDateTime expiresAt
+		OffsetDateTime expiresAt,
+		LiveEventReactionSummaryDto reactions,
+		LiveEventReactionUsersDto reactionUsers
 ) {}

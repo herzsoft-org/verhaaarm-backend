@@ -3,6 +3,7 @@ package moe.herz.verhaarmbackend.liveevent;
 import jakarta.validation.Valid;
 import moe.herz.verhaarmbackend.liveevent.dto.CreateLiveEventRequest;
 import moe.herz.verhaarmbackend.liveevent.dto.LiveEventDto;
+import moe.herz.verhaarmbackend.liveevent.dto.LiveEventReactionSummaryDto;
 import moe.herz.verhaarmbackend.liveevent.dto.UpdateLiveEventRequest;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserRepository;
@@ -47,6 +48,15 @@ public class LiveEventController {
 	@DeleteMapping("/{id}")
 	public void delete(@PathVariable UUID id, Authentication auth) {
 		liveEvents.delete(id, actor(auth));
+	}
+
+	@PutMapping("/{id}/reactions/{type}")
+	public LiveEventReactionSummaryDto toggleReaction(
+			@PathVariable UUID id,
+			@PathVariable String type,
+			Authentication auth
+	) {
+		return liveEvents.toggleReaction(id, LiveEventReactionType.fromPath(type), actor(auth));
 	}
 
 	private UserEntity actor(Authentication auth) {
