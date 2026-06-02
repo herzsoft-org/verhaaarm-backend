@@ -44,9 +44,10 @@ MVP target: Users/Roles → Periods → Fines → CSV exports → Events/Attenda
 
 ## License
 
-This project is proprietary and closed source.
+This project is licensed under the GNU Affero General Public License v3.0 only.
 
-Copyright (c) 2026 Valentin Schecklein. All rights reserved.
+Copyright (c) 2026 Valentin Schecklein.
 
-No permission is granted to use, copy, modify, distribute, host, deploy, or
-otherwise exploit this software without prior written permission.
+You may use, copy, modify, and distribute this software under the terms of the GNU Affero General Public License v3.0 only. If you modify this software and make it available for use over a network, you must also make the corresponding source code of your modified version available to those users, as required by the AGPLv3.
+
+See the LICENSE file for the full license text.
