@@ -1,53 +1,42 @@
 # Verhåårm Backend
 
-Spring Boot REST API for Verhåårm (internal administration: fines, convent periods, events, attendance, exports).
+Backend for **Verhåårm**, a custom administration app built for one specific club.
 
-## Tech
-- Java (Spring Boot)
-- PostgreSQL
-- JWT auth (access + refresh)
-- OpenAPI / Swagger UI (springdoc-openapi)
-- Migrations: Flyway
+## Project Context
 
-## Local Development
+This repository is mainly meant as a portfolio project. Verhåårm was developed as a custom internal tool, so the business logic is intentionally specific. 
 
-### Prerequisites
-- Java (matching the project’s toolchain)
-- PostgreSQL
-- (Optional) Docker for local Postgres, if you use it locally
+## What I Built
 
-### Configure
-Create `application-local.yml` (not committed) or use env vars.
+This backend provides the API for managing users, roles, periods, fines,
+attendance, tasks, suggestions, live events, file uploads, exports, and push
+notifications.
 
-Example env vars:
-- `SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/verhaaarm`
-- `SPRING_DATASOURCE_USERNAME=...`
-- `SPRING_DATASOURCE_PASSWORD=...`
+The focus of the project was building a real-world backend with authentication,
+authorization, auditability, and mobile/web app integration.
 
-### Run
-- Run from IDE, or:
-- `./mvnw spring-boot:run` (Maven)  
-  or `./gradlew bootRun` (Gradle)
+## Technical Highlights
 
-### Swagger / OpenAPI
-After starting:
-- Swagger UI: `/swagger-ui.html` (or the springdoc path you configure)
-
-## Deployment (VPS)
-See `verhaaarm-infra` repo:
-- systemd service unit
-- nginx reverse proxy config
-- backup scripts
-
-## Project Status
-MVP target: Users/Roles → Periods → Fines → CSV exports → Events/Attendance → Suggestions/Live events.
+- **Java / Spring Boot REST API**
+- **PostgreSQL** database with **Flyway** migrations
+- **Spring Security** with JWT-based authentication
+- Access and refresh token flow with server-side session tracking
+- Role-based access control for different internal responsibilities
+- Structured service/controller/repository architecture
+- OpenAPI / Swagger documentation via springdoc-openapi
+- Push notifications for Android and web/PWA clients
+  - Firebase Cloud Messaging
+  - Web Push / VAPID
+- File upload handling for fine photos
+- CSV export functionality
+- Audit logging for important actions
+- Deployment on a VPS behind nginx with systemd
 
 ## License
 
-This project is licensed under the GNU Affero General Public License v3.0 only.
+This project is licensed under the **GNU Affero General Public License v3.0
+only**.
 
 Copyright (c) 2026 Valentin Schecklein.
 
-You may use, copy, modify, and distribute this software under the terms of the GNU Affero General Public License v3.0 only. If you modify this software and make it available for use over a network, you must also make the corresponding source code of your modified version available to those users, as required by the AGPLv3.
-
-See the LICENSE file for the full license text.
+See the `LICENSE` file for the full license text.
