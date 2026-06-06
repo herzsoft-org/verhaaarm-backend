@@ -48,7 +48,11 @@ public class SecurityConfig {
 						.requestMatchers("/swagger-ui.html", "/swagger-ui/**").permitAll()
 						.requestMatchers("/v3/api-docs/**").permitAll()
 
-						.requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
+						.requestMatchers(
+								"/actuator/health",
+								"/actuator/health/",
+								"/actuator/health/**"
+						).permitAll()
 
 						// lock down any other actuator endpoint if exposure is expanded later
 						.requestMatchers("/actuator/**").hasRole("ADMIN")
