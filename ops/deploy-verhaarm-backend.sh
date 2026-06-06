@@ -82,8 +82,7 @@ rollback() {
     --if-exists \
     --single-transaction \
     --exit-on-error \
-    --dbname "$DB_NAME" \
-    "$DB_BACKUP"
+    --dbname "$DB_NAME" < "$DB_BACKUP"
 
   echo "Starting service after rollback."
   systemctl start "$SERVICE_NAME"
@@ -141,16 +140,14 @@ fi
 trap 'rollback "$LINENO" "$BASH_COMMAND"' ERR
 
 echo "Creating backup directory: $BACKUP_DIR"
-install -d -o root -g postgres -m 0770 "$BACKUP_DIR"
+install -d -o root -g root -m 0700 "$BACKUP_DIR"
 
 echo "Backing up current app JAR to: $APP_BACKUP"
 cp -a "$APP_JAR" "$APP_BACKUP"
 
 echo "Backing up PostgreSQL database '$DB_NAME' to: $DB_BACKUP"
-sudo -n -u postgres pg_dump \
-  --format=custom \
-  --file "$DB_BACKUP" \
-  "$DB_NAME"
+sudo -n -u postgres pg_dump --format=custom "$DB_NAME" > "$DB_BACKUP"
+chmod 600 "$DB_BACKUP"
 
 if [ ! -s "$APP_BACKUP" ]; then
   echo "App JAR backup is missing or empty: $APP_BACKUP"
