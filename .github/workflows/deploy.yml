@@ -3,9 +3,12 @@ name: Build & Deploy Backend
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: verhaaarm-backend-deploy
-  cancel-in-progress: true
+  queue: max
 
 jobs:
   build-and-deploy:
@@ -29,26 +32,33 @@ jobs:
           chmod +x ./mvnw
           ./mvnw -B clean package -DskipTests
 
-      - name: Pick JAR artifact (avoid .original)
+      - name: Pick JAR artifact
         id: jar
         run: |
           set -euo pipefail
           echo "== Target dir listing =="
           ls -lah verhaarm-backend/target || true
 
-          JAR_REL="$(ls -1t verhaarm-backend/target/*.jar \
-            | grep -vE '\.original\.jar$|-(sources|javadoc)\.jar$' \
-            | head -n1)"
+          mapfile -t jars < <(
+            find verhaarm-backend/target -maxdepth 1 -type f -name '*.jar' \
+              ! -name '*.original.jar' \
+              ! -name '*-sources.jar' \
+              ! -name '*-javadoc.jar' \
+              -printf '%T@ %p\n' | sort -rn | awk '{ sub(/^[^ ]+ /, ""); print }'
+          )
 
-          if [ -z "${JAR_REL:-}" ]; then
-            echo "ERROR: No deployable JAR found."
+          if [ "${#jars[@]}" -ne 1 ]; then
+            echo "ERROR: Expected exactly one deployable JAR, found ${#jars[@]}."
+            printf 'Candidate: %s\n' "${jars[@]:-}"
             exit 1
           fi
 
+          JAR_REL="${jars[0]}"
           JAR_ABS="${GITHUB_WORKSPACE}/${JAR_REL}"
           echo "Selected JAR (rel): $JAR_REL"
           echo "Selected JAR (abs): $JAR_ABS"
           ls -lah "$JAR_ABS"
+          sha256sum "$JAR_ABS"
 
           echo "jar_abs=$JAR_ABS" >> "$GITHUB_OUTPUT"
 
@@ -67,7 +77,10 @@ jobs:
           set -euo pipefail
           LOCAL_JAR="${{ steps.jar.outputs.jar_abs }}"
           echo "Uploading: $LOCAL_JAR"
-          test -f "$LOCAL_JAR"
+          test -s "$LOCAL_JAR"
+          echo "== Local JAR =="
+          ls -lah "$LOCAL_JAR"
+          sha256sum "$LOCAL_JAR"
 
           scp -v \
             -i ~/.ssh/id_ed25519 \
@@ -79,10 +92,11 @@ jobs:
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
             'set -euo pipefail
              echo "Remote user: $(whoami)"; echo "Host: $(hostname)"
+             test -s /tmp/verhaarm.jar
              ls -lah /tmp/verhaarm.jar
-             sha256sum /tmp/verhaarm.jar | head -c 120; echo'
+             sha256sum /tmp/verhaarm.jar'
 
-      - name: Deploy + restart (with diagnostics)
+      - name: Deploy with VPS deployment script
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
@@ -91,22 +105,34 @@ jobs:
              echo "== Pre-deploy =="
              /usr/bin/java -version || true
              ls -lah /tmp/verhaarm.jar
-
-             sudo -n /bin/systemctl stop verhaarm
-             sudo -n /bin/mv /tmp/verhaarm.jar /opt/verhaarm/app.jar
-             sudo -n /bin/chown root.root /opt/verhaarm/app.jar
-             sudo -n /bin/chmod 755 /opt/verhaarm/app.jar
-             sudo -n /bin/systemctl start verhaarm
-
-             systemctl --no-pager -l status verhaarm || true
+             sudo -n /usr/local/sbin/deploy-verhaarm-backend /tmp/verhaarm.jar
             ' || (
               ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
                 "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
                 'set -euo pipefail
                  echo "== Diagnostics =="
-                 ls -lah /tmp/verhaarm.jar || true
                  systemctl --no-pager -l status verhaarm || true
                  journalctl -u verhaarm -n 200 --no-pager || true
+                 ls -lah /tmp/verhaarm.jar || true
+                 ls -lah /opt/verhaarm/backups || true
                 ' || true
               exit 1
             )
+
+      - name: Verify public health
+        run: |
+          set -euo pipefail
+          PUBLIC_HEALTH_URL="https://verhaarmapi.herz.moe/actuator/health"
+
+          for i in $(seq 1 20); do
+            body="$(curl -fsS --max-time 10 "$PUBLIC_HEALTH_URL" || true)"
+            if printf '%s' "$body" | python3 -c 'import json,sys; data=json.load(sys.stdin); sys.exit(0 if data.get("status")=="UP" else 1)' 2>/dev/null; then
+              echo "Public health check OK: $PUBLIC_HEALTH_URL"
+              exit 0
+            fi
+            echo "Public health check not UP yet ($i/20): $PUBLIC_HEALTH_URL"
+            sleep 3
+          done
+
+          echo "Public health check failed: $PUBLIC_HEALTH_URL"
+          exit 1
