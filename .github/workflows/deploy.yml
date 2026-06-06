@@ -122,7 +122,7 @@ jobs:
       - name: Verify public health
         run: |
           set -euo pipefail
-          PUBLIC_HEALTH_URL="https://verhaarmapi.herz.moe/actuator/health"
+          PUBLIC_HEALTH_URL="https://verhaarmapi.herz.moe/actuator/health/"
 
           for i in $(seq 1 20); do
             body="$(curl -fsS --max-time 10 "$PUBLIC_HEALTH_URL" || true)"
