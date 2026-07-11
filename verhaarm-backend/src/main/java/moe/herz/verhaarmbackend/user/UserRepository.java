@@ -57,6 +57,22 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
 			@Param("qLower") String qLower
 	);
 
+	// Picker: enabled + disabled users, minimal data, sorted. Used where already-assigned
+	// disabled users must remain visible/selectable (e.g. to remove them from a task).
+	@Query("""
+        select u from UserEntity u
+        where (
+            :qNorm = ''
+            or u.usernameNormalized like concat('%', :qNorm, '%')
+            or lower(u.displayName) like concat('%', :qLower, '%')
+          )
+        order by u.usernameNormalized asc
+    """)
+	List<UserEntity> searchAllForPicker(
+			@Param("qNorm") String qNorm,
+			@Param("qLower") String qLower
+	);
+
 	// Prevent lockout: last enabled ADMIN
 	@Query("""
         select count(distinct u.id)

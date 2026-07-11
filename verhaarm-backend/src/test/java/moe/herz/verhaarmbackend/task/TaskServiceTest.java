@@ -6,6 +6,7 @@ import moe.herz.verhaarmbackend.audit.AuditLogService;
 import moe.herz.verhaarmbackend.notification.NotificationService;
 import moe.herz.verhaarmbackend.notification.NotificationType;
 import moe.herz.verhaarmbackend.task.dto.CreateTaskRequest;
+import moe.herz.verhaarmbackend.task.dto.UpdateTaskRequest;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserRepository;
 import moe.herz.verhaarmbackend.user.UserRole;
@@ -125,6 +126,70 @@ class TaskServiceTest {
 		assertEquals("notifyOnlyMe requires ADMIN", ex.getReason());
 		verify(tasks, never()).save(any());
 		verifyNoInteractions(notifications);
+	}
+
+	@Test
+	void updateRetainsExistingDisabledAssigneeWithoutError() {
+		UserEntity creator = user(UserRole.MEMBER);
+		UserEntity disabledAssignee = new UserEntity(UUID.randomUUID(), "disabled-user", "Disabled User", "hash", true);
+		TaskEntity task = new TaskEntity(UUID.randomUUID(), creator.getId(), "Titel", "Beschreibung", OffsetDateTime.now());
+		task.getAssignees().add(new TaskAssigneeEntity(task, disabledAssignee));
+
+		when(tasks.findVisibleByIdWithAssignees(task.getId())).thenReturn(Optional.of(task));
+		when(users.findAllById(List.of(disabledAssignee.getId()))).thenReturn(List.of(disabledAssignee));
+
+		assertDoesNotThrow(() -> service.update(
+				task.getId(),
+				new UpdateTaskRequest("Neuer Titel", null, List.of(disabledAssignee.getId()), null, null, null, null),
+				creator
+		));
+
+		verify(tasks).save(task);
+		assertEquals(1, task.getAssignees().size());
+	}
+
+	@Test
+	void updateRejectsNewlyAddedDisabledAssignee() {
+		UserEntity creator = user(UserRole.MEMBER);
+		UserEntity enabledAssignee = user(UserRole.MEMBER);
+		UserEntity disabledAssignee = new UserEntity(UUID.randomUUID(), "disabled-user", "Disabled User", "hash", true);
+		TaskEntity task = new TaskEntity(UUID.randomUUID(), creator.getId(), "Titel", "Beschreibung", OffsetDateTime.now());
+		task.getAssignees().add(new TaskAssigneeEntity(task, enabledAssignee));
+
+		when(tasks.findVisibleByIdWithAssignees(task.getId())).thenReturn(Optional.of(task));
+		when(users.findAllById(List.of(enabledAssignee.getId(), disabledAssignee.getId())))
+				.thenReturn(List.of(enabledAssignee, disabledAssignee));
+
+		ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> service.update(
+				task.getId(),
+				new UpdateTaskRequest(null, null, List.of(enabledAssignee.getId(), disabledAssignee.getId()), null, null, null, null),
+				creator
+		));
+
+		assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
+		verify(tasks, never()).save(any());
+	}
+
+	@Test
+	void updateAllowsRemovingDisabledAssignee() {
+		UserEntity creator = user(UserRole.MEMBER);
+		UserEntity enabledAssignee = user(UserRole.MEMBER);
+		UserEntity disabledAssignee = new UserEntity(UUID.randomUUID(), "disabled-user", "Disabled User", "hash", true);
+		TaskEntity task = new TaskEntity(UUID.randomUUID(), creator.getId(), "Titel", "Beschreibung", OffsetDateTime.now());
+		task.getAssignees().add(new TaskAssigneeEntity(task, enabledAssignee));
+		task.getAssignees().add(new TaskAssigneeEntity(task, disabledAssignee));
+
+		when(tasks.findVisibleByIdWithAssignees(task.getId())).thenReturn(Optional.of(task));
+		when(users.findAllById(List.of(enabledAssignee.getId()))).thenReturn(List.of(enabledAssignee));
+
+		assertDoesNotThrow(() -> service.update(
+				task.getId(),
+				new UpdateTaskRequest(null, null, List.of(enabledAssignee.getId()), null, null, null, null),
+				creator
+		));
+
+		assertEquals(1, task.getAssignees().size());
+		assertEquals(enabledAssignee.getId(), task.getAssignees().iterator().next().getUser().getId());
 	}
 
 	private AtomicReference<TaskEntity> stubCreateReload() {

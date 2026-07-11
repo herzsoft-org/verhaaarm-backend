@@ -121,16 +121,15 @@ public class UserService {
 
 	@Transactional(readOnly = true)
 	public List<UserPickerDto> picker(boolean activeOnly, String query) {
-		if (!activeOnly) {
-			throw ApiErrors.badRequest("Only active=true is supported");
-		}
-
 		String raw = query == null ? "" : query.trim();
 		String qNorm = UsernameNormalizer.normalize(raw);
 		String qLower = raw.toLowerCase(Locale.ROOT);
 
-		return users.searchActiveForPicker(qNorm, qLower)
-				.stream()
+		List<UserEntity> found = activeOnly
+				? users.searchActiveForPicker(qNorm, qLower)
+				: users.searchAllForPicker(qNorm, qLower);
+
+		return found.stream()
 				.map(u -> {
 					UserMemberStatus status = safeMemberStatus(u);
 
@@ -139,7 +138,8 @@ public class UserService {
 							u.getUsername(),
 							u.getDisplayName(),
 							status.name(),
-							status.isAktivitas()
+							status.isAktivitas(),
+							u.isDisabled()
 					);
 				})
 				.toList();

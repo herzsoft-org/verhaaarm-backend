@@ -244,12 +244,19 @@ public class TaskService {
 			List<UUID> incoming = req.assigneeUserIds().stream().filter(Objects::nonNull).distinct().toList();
 			if (incoming.isEmpty()) throw ApiErrors.badRequest("At least one assignee required");
 
-			Map<UUID, UserEntity> assigneeUsers = loadEnabledUsersOrFail(incoming);
-
 			Set<UUID> incomingSet = new HashSet<>(incoming);
 			Set<UUID> added = new HashSet<>(incomingSet);
 			added.removeAll(beforeAssigneeIds);
 			newlyAddedAssignees = Set.copyOf(added);
+
+			// Only newly-added assignees must be enabled; assignees that were already on the
+			// task before this edit are kept even if they've since been disabled, so they can
+			// still be removed (rather than making the whole task un-editable).
+			Map<UUID, UserEntity> assigneeUsers = loadUsersOrFail(incoming);
+			for (UUID addedId : newlyAddedAssignees) {
+				UserEntity u = assigneeUsers.get(addedId);
+				if (u.isDisabled()) throw ApiErrors.badRequest("Assignee user is disabled: " + u.getId());
+			}
 
 			t.getAssignees().clear();
 			for (UUID uid : incoming) {
@@ -468,14 +475,19 @@ public class TaskService {
 	}
 
 	private Map<UUID, UserEntity> loadEnabledUsersOrFail(List<UUID> ids) {
+		Map<UUID, UserEntity> byId = loadUsersOrFail(ids);
+		for (UserEntity u : byId.values()) {
+			if (u.isDisabled()) throw ApiErrors.badRequest("Assignee user is disabled: " + u.getId());
+		}
+		return byId;
+	}
+
+	private Map<UUID, UserEntity> loadUsersOrFail(List<UUID> ids) {
 		List<UserEntity> found = users.findAllById(ids);
 		Map<UUID, UserEntity> byId = found.stream().collect(Collectors.toMap(UserEntity::getId, u -> u, (a, b) -> a));
 
 		for (UUID id : ids) {
 			if (!byId.containsKey(id)) throw ApiErrors.badRequest("Assignee user not found: " + id);
-		}
-		for (UserEntity u : found) {
-			if (u.isDisabled()) throw ApiErrors.badRequest("Assignee user is disabled: " + u.getId());
 		}
 		return byId;
 	}
@@ -490,7 +502,8 @@ public class TaskService {
 						u.getUsername(),
 						u.getDisplayName(),
 						u.getMemberStatus() == null ? "BURSCH" : u.getMemberStatus().name(),
-						u.getMemberStatus() == null || u.getMemberStatus().isAktivitas()
+						u.getMemberStatus() == null || u.getMemberStatus().isAktivitas(),
+						u.isDisabled()
 				))
 				.toList();
 

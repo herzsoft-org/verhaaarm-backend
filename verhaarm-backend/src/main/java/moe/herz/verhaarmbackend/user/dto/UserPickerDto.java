@@ -7,5 +7,6 @@ public record UserPickerDto(
 		String username,
 		String displayName,
 		String memberStatus,
-		boolean aktivitas
+		boolean aktivitas,
+		boolean disabled
 ) {}

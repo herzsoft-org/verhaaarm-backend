@@ -34,10 +34,7 @@ public class UserController {
 			@RequestParam boolean active,
 			@RequestParam(required = false) String query
 	) {
-		if (!active) {
-			throw new IllegalArgumentException("Only active=true is supported");
-		}
-		return users.picker(true, query);
+		return users.picker(active, query);
 	}
 
 	@GetMapping(params = "online")
