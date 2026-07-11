@@ -248,6 +248,68 @@ class PaukstundeServiceTest {
 		assertEquals(0, total.entryCount());
 	}
 
+	@Test
+	void listForConventsperiodeReturnsEntriesForGivenPastPeriod() {
+		UserEntity participant = user(UserMemberStatus.BURSCH);
+		LocalDate from = LocalDate.now().minusMonths(8);
+		LocalDate to = LocalDate.now().minusMonths(2);
+		ConventPeriodEntity pastPeriod = new ConventPeriodEntity(UUID.randomUUID(), "WS24/25", from, to, true);
+		PaukstundeEntity session = session(user(UserMemberStatus.BURSCH).getId(), participant.getId());
+
+		when(periods.findById(pastPeriod.getId())).thenReturn(Optional.of(pastPeriod));
+		when(paukstunden.findForParticipantInDateRange(participant.getId(), from, to)).thenReturn(List.of(session));
+		when(users.findAllById(anySet())).thenReturn(List.of(participant));
+
+		var result = service.listForConventsperiode(pastPeriod.getId(), participant);
+
+		assertEquals(1, result.size());
+		assertEquals(session.getId(), result.getFirst().id());
+		verify(periods).findById(pastPeriod.getId());
+		verify(periods, never()).findCovering(any());
+	}
+
+	@Test
+	void summaryForConventsperiodeRequiresStaff() {
+		UserEntity participant = user(UserMemberStatus.BURSCH);
+		UUID periodId = UUID.randomUUID();
+
+		ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
+				service.summaryForConventsperiode(periodId, participant));
+
+		assertEquals(HttpStatus.FORBIDDEN, ex.getStatusCode());
+		verify(periods, never()).findById(any());
+	}
+
+	@Test
+	void summaryForConventsperiodeReturnsTotalsForGivenPastPeriod() {
+		UserEntity admin = user(UserMemberStatus.BURSCH, UserRole.ADMIN);
+		UserEntity participant = user(UserMemberStatus.BURSCH);
+		LocalDate from = LocalDate.now().minusMonths(8);
+		LocalDate to = LocalDate.now().minusMonths(2);
+		ConventPeriodEntity pastPeriod = new ConventPeriodEntity(UUID.randomUUID(), "WS24/25", from, to, true);
+		PaukstundeEntity session = session(admin.getId(), participant.getId());
+
+		when(periods.findById(pastPeriod.getId())).thenReturn(Optional.of(pastPeriod));
+		when(paukstunden.findInDateRangeWithParticipants(from, to)).thenReturn(List.of(session));
+		when(users.findAllEnabledWithRoles()).thenReturn(List.of(participant));
+
+		var result = service.summaryForConventsperiode(pastPeriod.getId(), admin);
+
+		assertEquals(1, result.size());
+		assertEquals(participant.getId(), result.getFirst().userId());
+		assertEquals(1, result.getFirst().totalHours());
+	}
+
+	@Test
+	void listAndSummaryForUnknownConventsperiodeThrowNotFound() {
+		UserEntity admin = user(UserMemberStatus.BURSCH, UserRole.ADMIN);
+		UUID periodId = UUID.randomUUID();
+		when(periods.findById(periodId)).thenReturn(Optional.empty());
+
+		assertThrows(ResponseStatusException.class, () -> service.listForConventsperiode(periodId, admin));
+		assertThrows(ResponseStatusException.class, () -> service.summaryForConventsperiode(periodId, admin));
+	}
+
 	private static PaukstundeEntity session(UUID creatorId, UUID... participantIds) {
 		PaukstundeEntity session = new PaukstundeEntity(UUID.randomUUID(), LocalDate.now(), 1, creatorId);
 		for (UUID participantId : participantIds) session.addParticipant(participantId);

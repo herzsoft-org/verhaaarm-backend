@@ -49,6 +49,16 @@ public class PaukstundeController {
 		return paukstunden.summaryCurrentConventsperiode(actor(auth));
 	}
 
+	@GetMapping("/conventsperiode/{periodId}")
+	public List<PaukstundeDto> listForConventsperiode(@PathVariable UUID periodId, Authentication auth) {
+		return paukstunden.listForConventsperiode(periodId, actor(auth));
+	}
+
+	@GetMapping("/summary/conventsperiode/{periodId}")
+	public List<PaukstundeUserTotalDto> summaryForConventsperiode(@PathVariable UUID periodId, Authentication auth) {
+		return paukstunden.summaryForConventsperiode(periodId, actor(auth));
+	}
+
 	@PatchMapping("/{id}")
 	public PaukstundeDto update(@PathVariable UUID id, @RequestBody UpdatePaukstundeRequest req, Authentication auth) {
 		return paukstunden.update(id, req, actor(auth));

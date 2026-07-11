@@ -56,6 +56,11 @@ public class SlushyRecipeController {
 		return slushyRecipes.rate(id, req, actor(auth));
 	}
 
+	@DeleteMapping("/{id}/ratings")
+	public SlushyRecipeDto unrate(@PathVariable UUID id, Authentication auth) {
+		return slushyRecipes.unrate(id, actor(auth));
+	}
+
 	private UserEntity actor(Authentication auth) {
 		return users.findByUsernameWithRoles(auth.getName())
 				.orElseThrow(() -> ApiErrors.unauthorized("Unauthorized"));

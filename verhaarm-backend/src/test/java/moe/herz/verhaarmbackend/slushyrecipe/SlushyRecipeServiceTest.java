@@ -203,6 +203,45 @@ class SlushyRecipeServiceTest {
 		assertEquals(5, dto.ratingSummary().myStars());
 	}
 
+	@Test
+	void unrateRemovesExistingRatingAndRecalculatesSummary() {
+		UserEntity actor = user(UserRole.MEMBER);
+		SlushyRecipeEntity entity = new SlushyRecipeEntity(UUID.randomUUID(), "Titel", "Beschreibung", actor.getId());
+		SlushyRecipeRatingEntity existing = new SlushyRecipeRatingEntity(UUID.randomUUID(), entity.getId(), actor.getId(), 4, "Ok");
+
+		when(recipes.findVisibleById(entity.getId())).thenReturn(Optional.of(entity));
+		when(ratings.findByRecipeIdAndUserId(entity.getId(), actor.getId())).thenReturn(Optional.of(existing));
+		when(ingredients.findByRecipeIdOrderBySortOrderAsc(entity.getId())).thenReturn(List.of());
+		when(ratings.findByRecipeId(entity.getId())).thenReturn(List.of());
+		when(ratings.averageStarsByRecipeId(entity.getId())).thenReturn(null);
+		when(ratings.countByRecipeId(entity.getId())).thenReturn(0L);
+		when(users.findAllById(anyCollection())).thenReturn(List.of(actor));
+
+		SlushyRecipeDto dto = service.unrate(entity.getId(), actor);
+
+		verify(ratings).delete(existing);
+		assertEquals(0.0, dto.ratingSummary().average());
+		assertEquals(0, dto.ratingSummary().count());
+		assertNull(dto.ratingSummary().myStars());
+	}
+
+	@Test
+	void unrateWithoutExistingRatingIsANoop() {
+		UserEntity actor = user(UserRole.MEMBER);
+		SlushyRecipeEntity entity = new SlushyRecipeEntity(UUID.randomUUID(), "Titel", "Beschreibung", actor.getId());
+
+		when(recipes.findVisibleById(entity.getId())).thenReturn(Optional.of(entity));
+		when(ratings.findByRecipeIdAndUserId(entity.getId(), actor.getId())).thenReturn(Optional.empty());
+		when(ingredients.findByRecipeIdOrderBySortOrderAsc(entity.getId())).thenReturn(List.of());
+		when(ratings.findByRecipeId(entity.getId())).thenReturn(List.of());
+		when(ratings.averageStarsByRecipeId(entity.getId())).thenReturn(null);
+		when(ratings.countByRecipeId(entity.getId())).thenReturn(0L);
+		when(users.findAllById(anyCollection())).thenReturn(List.of(actor));
+
+		assertDoesNotThrow(() -> service.unrate(entity.getId(), actor));
+		verify(ratings, never()).delete(any());
+	}
+
 	private static UserEntity user(UserRole... roles) {
 		UUID id = UUID.randomUUID();
 		UserEntity user = new UserEntity(id, "user-" + id, "User " + id, "hash", false);

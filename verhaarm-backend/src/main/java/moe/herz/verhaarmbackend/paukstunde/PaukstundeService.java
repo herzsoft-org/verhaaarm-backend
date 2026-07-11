@@ -76,7 +76,16 @@ public class PaukstundeService {
 	@Transactional(readOnly = true)
 	public List<PaukstundeDto> listCurrentConventsperiode(UserEntity actor) {
 		if (actor == null || actor.getId() == null) throw ApiErrors.forbidden("Forbidden");
-		ConventPeriodEntity period = currentPeriod();
+		return listForPeriod(currentPeriod(), actor);
+	}
+
+	@Transactional(readOnly = true)
+	public List<PaukstundeDto> listForConventsperiode(UUID periodId, UserEntity actor) {
+		if (actor == null || actor.getId() == null) throw ApiErrors.forbidden("Forbidden");
+		return listForPeriod(periodOrThrow(periodId), actor);
+	}
+
+	private List<PaukstundeDto> listForPeriod(ConventPeriodEntity period, UserEntity actor) {
 		List<PaukstundeEntity> entries = isStaff(actor)
 				? paukstunden.findInDateRangeWithParticipants(period.getStartAt(), period.getEndAt())
 				: paukstunden.findForParticipantInDateRange(actor.getId(), period.getStartAt(), period.getEndAt());
@@ -112,7 +121,16 @@ public class PaukstundeService {
 	@Transactional(readOnly = true)
 	public List<PaukstundeUserTotalDto> summaryCurrentConventsperiode(UserEntity actor) {
 		requireStaff(actor);
-		ConventPeriodEntity period = currentPeriod();
+		return summaryForPeriod(currentPeriod());
+	}
+
+	@Transactional(readOnly = true)
+	public List<PaukstundeUserTotalDto> summaryForConventsperiode(UUID periodId, UserEntity actor) {
+		requireStaff(actor);
+		return summaryForPeriod(periodOrThrow(periodId));
+	}
+
+	private List<PaukstundeUserTotalDto> summaryForPeriod(ConventPeriodEntity period) {
 		List<PaukstundeEntity> entries = paukstunden.findInDateRangeWithParticipants(period.getStartAt(), period.getEndAt());
 		Map<UUID, UserEntity> enabledUsers = users.findAllEnabledWithRoles().stream()
 				.collect(Collectors.toMap(UserEntity::getId, Function.identity()));
@@ -182,6 +200,11 @@ public class PaukstundeService {
 						"No active period for today",
 						Map.of("date", today.toString())
 				));
+	}
+
+	private ConventPeriodEntity periodOrThrow(UUID periodId) {
+		return periods.findById(periodId)
+				.orElseThrow(() -> ApiErrors.notFound("Conventsperiode not found"));
 	}
 
 	private void requireCanModify(PaukstundeEntity p, UserEntity actor) {

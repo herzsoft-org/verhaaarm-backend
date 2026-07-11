@@ -203,6 +203,33 @@ public class SlushyRecipeService {
 		return toDto(reloaded, actor);
 	}
 
+	@Transactional
+	public SlushyRecipeDto unrate(UUID id, UserEntity actor) {
+		if (actor == null) throw ApiErrors.forbidden("Forbidden");
+
+		SlushyRecipeEntity r = recipes.findVisibleById(id)
+				.orElseThrow(() -> ApiErrors.notFound("Recipe not found"));
+
+		SlushyRecipeRatingEntity rating = ratings.findByRecipeIdAndUserId(r.getId(), actor.getId())
+				.orElse(null);
+
+		if (rating != null) {
+			ratings.delete(rating);
+
+			em.flush();
+			em.clear();
+
+			var d = audit.obj();
+			audit.put(d, "recipeId", r.getId());
+			audit.log(actor, "slushyRecipe.unrate", d);
+		}
+
+		SlushyRecipeEntity reloaded = recipes.findVisibleById(r.getId())
+				.orElseThrow(() -> ApiErrors.notFound("Recipe not found"));
+
+		return toDto(reloaded, actor);
+	}
+
 	private void saveIngredients(UUID recipeId, List<IngredientRequest> reqIngredients) {
 		if (reqIngredients == null) return;
 
