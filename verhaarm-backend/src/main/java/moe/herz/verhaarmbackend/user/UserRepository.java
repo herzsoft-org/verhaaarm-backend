@@ -137,4 +137,12 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
 			@Param("userId") UUID userId,
 			@Param("lastOnlineAt") OffsetDateTime lastOnlineAt
 	);
+
+	@Query("""
+        select distinct u from UserEntity u
+        join u.roles r
+        where r.role = :role and u.disabled = false
+        order by u.usernameNormalized asc
+	""")
+	List<UserEntity> findAllEnabledByRole(@Param("role") UserRole role);
 }
