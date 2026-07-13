@@ -10,6 +10,8 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/amt")
 public class AmtController {
@@ -26,6 +28,15 @@ public class AmtController {
 	@PreAuthorize("isAuthenticated()")
 	public AemterOverviewDto overview() {
 		return amt.getOverview();
+	}
+
+	// Lets other features (e.g. Ferienvertreter) gate their own edit UI on the same
+	// "holds any Amt" rule without having to load the full Ämter overview.
+	@GetMapping("/can-edit")
+	@PreAuthorize("isAuthenticated()")
+	public Map<String, Boolean> canEdit(Authentication auth) {
+		UserEntity actor = resolveActor(auth);
+		return Map.of("canEdit", amt.isAmtHolder(actor));
 	}
 
 	// Any user currently holding some Amt (auto or manual) may edit; enforced in AmtService
