@@ -9,6 +9,7 @@ import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserMemberStatus;
 import moe.herz.verhaarmbackend.user.UserRepository;
 import moe.herz.verhaarmbackend.user.UserRole;
+import moe.herz.verhaarmbackend.user.UserService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -25,12 +26,13 @@ class AmtServiceTest {
 
 	private final AmtHolderRepository holders = mock(AmtHolderRepository.class);
 	private final UserRepository users = mock(UserRepository.class);
+	private final UserService userService = mock(UserService.class);
 	private final AuditLogRepository auditRepo = mock(AuditLogRepository.class);
 	private final AuditLogService audit = new AuditLogService(auditRepo, new ObjectMapper());
-	private final AmtService service = new AmtService(holders, users, audit);
+	private final AmtService service = new AmtService(holders, users, userService, audit);
 
 	@Test
-	void xxHolderWhoIsAlsoFechtwartMergesIntoOneLineAndHidesFechtwartFromOtherList() {
+	void xxHolderWhoIsAlsoFechtwartMergesIntoOneLineAndFlagsFechtwartAsMerged() {
 		UserEntity user = user(UserMemberStatus.BURSCH);
 
 		when(holders.findAllWithUsers()).thenReturn(
@@ -50,9 +52,12 @@ class AmtServiceTest {
 		assertEquals(1, xx.lines().getFirst().holders().size());
 		assertEquals(user.getId(), xx.lines().getFirst().holders().getFirst().userId());
 
-		boolean fechtwartStillListedSeparately = overview.other().stream()
-				.anyMatch(o -> o.amtType().equals("FECHTWART"));
-		assertFalse(fechtwartStillListedSeparately);
+		// still present in the flat list (so it stays individually editable), but flagged
+		// as merged so the UI can hide it there outside of edit mode.
+		var fechtwart = overview.other().stream()
+				.filter(o -> o.amtType().equals("FECHTWART"))
+				.findFirst().orElseThrow();
+		assertTrue(fechtwart.mergedIntoEhrengericht());
 	}
 
 	@Test
@@ -110,6 +115,22 @@ class AmtServiceTest {
 		assertEquals(newHolder.getId(), result.holders().getFirst().userId());
 		verify(holders).deleteByAmtType(AmtType.SCHRIFTWART);
 		verify(holders).save(any(AmtHolderEntity.class));
+	}
+
+	@Test
+	void setAutoHoldersDelegatesToUserServiceRoleReassignment() {
+		UserEntity actor = user(UserMemberStatus.BURSCH);
+		UserEntity newHolder = user(UserMemberStatus.BURSCH);
+		List<UUID> ids = List.of(newHolder.getId());
+		when(userService.setRoleHolders(UserRole.FECHTWART, ids, actor)).thenReturn(List.of(newHolder));
+
+		var result = service.setAutoHolders(AutoAmt.FECHTWART, ids, actor);
+
+		assertEquals("FECHTWART", result.amtType());
+		assertTrue(result.autoFromRole());
+		assertEquals(1, result.holders().size());
+		assertEquals(newHolder.getId(), result.holders().getFirst().userId());
+		verify(userService).setRoleHolders(UserRole.FECHTWART, ids, actor);
 	}
 
 	private static UserEntity user(UserMemberStatus status) {

@@ -86,6 +86,10 @@ public class UserEntity {
 		roles.add(new UserRoleEntity(this, role));
 	}
 
+	public void removeRole(UserRole role) {
+		roles.removeIf(r -> r.getRole() == role);
+	}
+
 	public boolean hasRole(UserRole role) {
 		return roles.stream().anyMatch(r -> r.getRole() == role);
 	}

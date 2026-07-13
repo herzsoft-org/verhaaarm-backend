@@ -10,6 +10,7 @@ import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserRepository;
 import moe.herz.verhaarmbackend.user.UserRole;
+import moe.herz.verhaarmbackend.user.UserService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,11 +31,13 @@ public class AmtService {
 
 	private final AmtHolderRepository holders;
 	private final UserRepository users;
+	private final UserService userService;
 	private final AuditLogService audit;
 
-	public AmtService(AmtHolderRepository holders, UserRepository users, AuditLogService audit) {
+	public AmtService(AmtHolderRepository holders, UserRepository users, UserService userService, AuditLogService audit) {
 		this.holders = holders;
 		this.users = users;
+		this.userService = userService;
 		this.audit = audit;
 	}
 
@@ -103,9 +106,8 @@ public class AmtService {
 		for (OtherOffice o : otherOffices) {
 			boolean fullyMergedIntoEhrengericht = !o.holderList().isEmpty()
 					&& o.holderList().stream().allMatch(u -> ehrengerichtHolderIds.contains(u.getId()));
-			if (fullyMergedIntoEhrengericht) continue;
 
-			other.add(new AmtEntryDto(o.key(), o.label(), o.autoFromRole(), toHolderDtos(o.holderList())));
+			other.add(new AmtEntryDto(o.key(), o.label(), o.autoFromRole(), fullyMergedIntoEhrengericht, toHolderDtos(o.holderList())));
 		}
 
 		return new AemterOverviewDto(ehrengericht, other);
@@ -157,7 +159,18 @@ public class AmtService {
 		audit.log(actor, "amt.setHolders", d);
 
 		List<UserEntity> newHolders = uniqueIds.stream().map(byId::get).toList();
-		return new AmtEntryDto(type.name(), type.label(), false, toHolderDtos(newHolders));
+		return new AmtEntryDto(type.name(), type.label(), false, false, toHolderDtos(newHolders));
+	}
+
+	/**
+	 * Edits one of the 4 role-derived Ämter (Sprecher/Fechtwart/Schmuckwart/Kassenwart) by
+	 * bulk-reassigning the underlying {@link UserRole}. Gated to ADMIN/SENIOR at the controller,
+	 * same as user administration (which is the other place this role can be edited).
+	 */
+	@Transactional
+	public AmtEntryDto setAutoHolders(AutoAmt autoAmt, List<UUID> userIds, UserEntity actor) {
+		List<UserEntity> newHolders = userService.setRoleHolders(autoAmt.role(), userIds, actor);
+		return new AmtEntryDto(autoAmt.name(), autoAmt.label(), true, false, toHolderDtos(newHolders));
 	}
 
 	private List<AmtHolderDto> toHolderDtos(List<UserEntity> list) {

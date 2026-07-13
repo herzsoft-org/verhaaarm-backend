@@ -369,6 +369,55 @@ public class UserService {
 	}
 
 	/**
+	 * Bulk-replaces who currently holds {@code role} (used for the 4 Ämter that are
+	 * derived from user roles: Sprecher/Fechtwart/Schmuckwart/Kassenwart). Callers are
+	 * responsible for the ADMIN/SENIOR permission gate (mirrors {@code PATCH /users/{id}}).
+	 */
+	@Transactional
+	public List<UserEntity> setRoleHolders(UserRole role, List<UUID> userIds, UserEntity actor) {
+		if (role == UserRole.ADMIN) {
+			throw ApiErrors.badRequest("Use user administration to manage the ADMIN role");
+		}
+
+		List<UUID> uniqueIds = userIds == null
+				? List.of()
+				: userIds.stream().filter(Objects::nonNull).distinct().toList();
+
+		List<UserEntity> targets = uniqueIds.isEmpty() ? List.of() : users.findAllById(uniqueIds);
+		Map<UUID, UserEntity> targetById = targets.stream().collect(Collectors.toMap(UserEntity::getId, u -> u));
+		for (UUID id : uniqueIds) {
+			if (!targetById.containsKey(id)) throw ApiErrors.badRequest("User not found: " + id);
+		}
+
+		long enabledTargetCount = targets.stream().filter(u -> !u.isDisabled()).count();
+		if (enabledTargetCount < 1) throw requiredRoleMissing(role);
+
+		List<UserEntity> currentHolders = users.findAllEnabledByRole(role);
+		Set<UUID> newIdSet = new HashSet<>(uniqueIds);
+
+		for (UserEntity current : currentHolders) {
+			if (!newIdSet.contains(current.getId())) {
+				current.removeRole(role);
+				users.save(current);
+			}
+		}
+		for (UserEntity target : targets) {
+			if (!target.hasRole(role)) {
+				target.addRole(role);
+				users.save(target);
+			}
+		}
+
+		var d = audit.obj();
+		audit.put(d, "role", role.name());
+		audit.putStringArray(d, "beforeUserIds", currentHolders.stream().map(u -> u.getId().toString()).sorted().toList());
+		audit.putStringArray(d, "afterUserIds", uniqueIds.stream().map(UUID::toString).sorted().toList());
+		audit.log(actor, "user.setRoleHolders", d);
+
+		return uniqueIds.stream().map(targetById::get).toList();
+	}
+
+	/**
 	 * Password change policy:
 	 *  - actor may change own password
 	 *  - only ADMIN may change another user's password

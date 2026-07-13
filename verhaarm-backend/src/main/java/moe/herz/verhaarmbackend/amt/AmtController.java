@@ -41,6 +41,20 @@ public class AmtController {
 		return amt.setHolders(amtType, req.userIds(), actor);
 	}
 
+	// Sprecher/Fechtwart/Schmuckwart/Kassenwart are derived from user roles; editing them here
+	// bulk-reassigns the underlying role, so it's gated the same as user administration
+	// (PATCH /users/{id}), not the "any Amt holder" rule used for the manual Ämter above.
+	@PatchMapping("/auto/{autoAmt}/holders")
+	@PreAuthorize("hasAnyRole('ADMIN','SENIOR')")
+	public AmtEntryDto setAutoHolders(
+			@PathVariable AutoAmt autoAmt,
+			@Valid @RequestBody SetAmtHoldersRequest req,
+			Authentication auth
+	) {
+		UserEntity actor = resolveActor(auth);
+		return amt.setAutoHolders(autoAmt, req.userIds(), actor);
+	}
+
 	private UserEntity resolveActor(Authentication auth) {
 		if (auth == null || auth.getName() == null || auth.getName().isBlank()) return null;
 		return userRepo.findByUsername(auth.getName()).orElse(null);
