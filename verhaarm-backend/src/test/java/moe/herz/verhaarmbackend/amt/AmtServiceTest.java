@@ -82,6 +82,20 @@ class AmtServiceTest {
 	}
 
 	@Test
+	void setHoldersAllowedForAdminEvenWithoutHoldingAnyAmt() {
+		UserEntity actor = user(UserMemberStatus.BURSCH);
+		UserEntity newHolder = user(UserMemberStatus.BURSCH);
+		when(users.hasRole(actor.getId(), UserRole.ADMIN)).thenReturn(true);
+		when(users.findAllById(List.of(newHolder.getId()))).thenReturn(List.of(newHolder));
+		when(holders.findByAmtType(AmtType.SCHRIFTWART)).thenReturn(List.of());
+
+		var result = service.setHolders(AmtType.SCHRIFTWART, List.of(newHolder.getId()), actor);
+
+		assertEquals(1, result.holders().size());
+		verify(holders).deleteByAmtType(AmtType.SCHRIFTWART);
+	}
+
+	@Test
 	void setHoldersAllowedForExistingAmtHolder() {
 		UserEntity actor = user(UserMemberStatus.BURSCH);
 		UserEntity newHolder = user(UserMemberStatus.BURSCH);

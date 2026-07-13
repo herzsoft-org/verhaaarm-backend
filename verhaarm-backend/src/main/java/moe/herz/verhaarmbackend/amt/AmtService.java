@@ -9,6 +9,7 @@ import moe.herz.verhaarmbackend.audit.AuditLogService;
 import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserRepository;
+import moe.herz.verhaarmbackend.user.UserRole;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -113,6 +114,9 @@ public class AmtService {
 	@Transactional(readOnly = true)
 	public boolean isAmtHolder(UserEntity actor) {
 		if (actor == null) return false;
+
+		// Admins can manage anything, regardless of whether they personally hold an Amt.
+		if (users.hasRole(actor.getId(), UserRole.ADMIN)) return true;
 
 		for (AutoAmt a : AutoAmt.values()) {
 			if (users.hasRole(actor.getId(), a.role())) return true;
