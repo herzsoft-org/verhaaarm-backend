@@ -54,10 +54,8 @@ public class LiveEventService {
 		this.notifications = notifications;
 	}
 
-	@Transactional
+	@Transactional(readOnly = true)
 	public List<LiveEventDto> listActive(UserEntity actor) {
-		materializeRecentlyStartedEvents(actor);
-
 		return liveEvents.findActiveVisible(OffsetDateTime.now())
 				.stream()
 				.map(e -> toDto(e, actor, false))
@@ -199,9 +197,18 @@ public class LiveEventService {
 		audit.log(actor, "liveEvent.delete", d);
 	}
 
-	private void materializeRecentlyStartedEvents(UserEntity actor) {
+	/**
+	 * Materializes scheduled events that have started recently.
+	 *
+	 * This is invoked by {@link LiveEventMaterializationJob}; it must not be
+	 * coupled to a user's GET /live-events request, otherwise notifications are
+	 * only created once somebody opens the app.
+	 */
+	@Transactional
+	public int materializeRecentlyStartedEvents() {
 		OffsetDateTime now = OffsetDateTime.now();
 		OffsetDateTime cutoff = now.minusHours(TTL_HOURS);
+		int materialized = 0;
 
 		List<EventEntity> recentlyStartedEvents = events.findRecentlyStartedVisible(cutoff, now);
 
@@ -230,9 +237,12 @@ public class LiveEventService {
 			audit.put(d, "place", liveEvent.getPlace());
 			audit.put(d, "description", liveEvent.getDescription());
 			audit.put(d, "expiresAt", liveEvent.getExpiresAt() == null ? null : liveEvent.getExpiresAt().toString());
-			audit.log(actor, "liveEvent.materializeFromEvent", d);
+			audit.log((UUID) null, "liveEvent.materializeFromEvent", d);
 			notifyLiveEventCreated(liveEvent, null);
+			materialized++;
 		}
+
+		return materialized;
 	}
 
 	private void notifyLiveEventCreated(LiveEventEntity e, UUID recipientUserId) {

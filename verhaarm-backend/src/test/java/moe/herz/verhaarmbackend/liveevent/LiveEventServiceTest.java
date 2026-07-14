@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityManager;
 import moe.herz.verhaarmbackend.audit.AuditLogRepository;
 import moe.herz.verhaarmbackend.audit.AuditLogService;
+import moe.herz.verhaarmbackend.event.EventEntity;
+import moe.herz.verhaarmbackend.event.EventKind;
+import moe.herz.verhaarmbackend.event.EventOwnerType;
 import moe.herz.verhaarmbackend.event.EventRepository;
 import moe.herz.verhaarmbackend.liveevent.dto.CreateLiveEventRequest;
 import moe.herz.verhaarmbackend.notification.NotificationService;
@@ -128,7 +131,6 @@ class LiveEventServiceTest {
 	void listIncludesCountsAndCurrentUserReactionFlags() {
 		UserEntity actor = user(UserRole.MEMBER);
 		LiveEventEntity event = liveEvent(actor.getId());
-		when(events.findRecentlyStartedVisible(any(), any())).thenReturn(List.of());
 		when(liveEvents.findActiveVisible(any())).thenReturn(List.of(event));
 		when(reactions.countByLiveEventIdAndType(event.getId(), LiveEventReactionType.PROST)).thenReturn(3L);
 		when(reactions.countByLiveEventIdAndType(event.getId(), LiveEventReactionType.ICH_KOMME)).thenReturn(2L);
@@ -143,6 +145,40 @@ class LiveEventServiceTest {
 		assertTrue(result.getFirst().reactions().reactedProst());
 		assertFalse(result.getFirst().reactions().reactedIchKomme());
 		assertNull(result.getFirst().reactionUsers());
+		verifyNoInteractions(events);
+	}
+
+	@Test
+	void scheduledEventMaterializationCreatesLiveEventAndNotificationWithoutAUserRequest() {
+		UserEntity creator = user(UserRole.MEMBER);
+		OffsetDateTime startsAt = OffsetDateTime.now().minusMinutes(1);
+		var scheduledEvent = new EventEntity(
+				UUID.randomUUID(),
+				creator.getId(),
+				"Geplanter Termin",
+				startsAt,
+				false,
+				EventKind.SECONDARY,
+				EventOwnerType.SENIOR
+		);
+		when(events.findRecentlyStartedVisible(any(), any())).thenReturn(List.of(scheduledEvent));
+		when(liveEvents.existsBySourceEventId(scheduledEvent.getId())).thenReturn(false);
+
+		int count = service.materializeRecentlyStartedEvents();
+
+		assertEquals(1, count);
+		ArgumentCaptor<LiveEventEntity> liveEventCaptor = ArgumentCaptor.forClass(LiveEventEntity.class);
+		verify(liveEvents).save(liveEventCaptor.capture());
+		LiveEventEntity materialized = liveEventCaptor.getValue();
+		assertEquals(scheduledEvent.getId(), materialized.getSourceEventId());
+		assertEquals("Geplanter Termin", materialized.getTitle());
+		assertEquals(startsAt.plusHours(2), materialized.getExpiresAt());
+		verify(notifications).createForEnabledUsersWithPush(
+				eq(NotificationType.LIVE_EVENT_CREATED),
+				eq("Das geht gerade:"),
+				eq("Geplanter Termin"),
+				anyMap()
+		);
 	}
 
 	@Test
