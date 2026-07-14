@@ -4,10 +4,8 @@ import com.google.auth.oauth2.GoogleCredentials;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.FirebaseOptions;
 import com.google.firebase.messaging.AndroidConfig;
-import com.google.firebase.messaging.AndroidNotification;
 import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.Message;
-import com.google.firebase.messaging.Notification;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayInputStream;
@@ -60,31 +58,23 @@ public class FcmSender {
 		}
 	}
 
-	/**
-	 * Option A: send notification+data
-	 * - notification: Android shows system notification in background/killed
-	 * - data: Flutter routes based on RemoteMessage.data
-	 */
 	public void send(String token, Map<String, String> data) throws Exception {
 		if (!isConfigured()) return;
 		initIfNeeded();
 
-		final String title = data == null ? null : data.get("title");
-		final String body = data == null ? null : data.get("body");
+		FirebaseMessaging.getInstance().send(buildMessage(token, data));
+	}
 
+	/**
+	 * Android push messages are deliberately data-only. The Flutter background
+	 * handler is the single owner of notification rendering, which avoids an
+	 * FCM-rendered notification being followed by a local duplicate.
+	 */
+	Message buildMessage(String token, Map<String, String> data) {
 		Message.Builder b = Message.builder()
 				.setToken(token)
-				// System notification for background/killed
-				.setNotification(Notification.builder()
-						.setTitle(title == null ? "" : title)
-						.setBody(body == null ? "" : body)
-						.build())
 				.setAndroidConfig(AndroidConfig.builder()
 						.setPriority(AndroidConfig.Priority.HIGH)
-						// IMPORTANT: must match the channel your app creates
-						.setNotification(AndroidNotification.builder()
-								.setChannelId("verhaarm_push")
-								.build())
 						.build());
 
 		if (data != null) {
@@ -94,6 +84,6 @@ public class FcmSender {
 			}
 		}
 
-		FirebaseMessaging.getInstance().send(b.build());
+		return b.build();
 	}
 }
