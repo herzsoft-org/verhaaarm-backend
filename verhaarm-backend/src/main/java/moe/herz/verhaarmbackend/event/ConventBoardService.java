@@ -186,6 +186,13 @@ public class ConventBoardService {
 			throw ApiErrors.badRequest("The batch must contain at least one change, create or delete");
 		}
 
+		// Serializes concurrent board commits against each other and against single-Event Convent
+		// writes, including the empty-board case the row lock below can't cover (see
+		// EventService#acquireConventWriteLock). Never acquired for the read-only dry-run path.
+		if (forUpdate) {
+			eventService.acquireConventWriteLock();
+		}
+
 		List<EventEntity> conventEvents = forUpdate
 				? events.findAllConventsOrderedVisibleForUpdate()
 				: events.findAllConventsOrderedVisible();

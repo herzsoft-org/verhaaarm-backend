@@ -32,6 +32,7 @@ public class EventService {
 
 	private static final ZoneId ZONE_BERLIN = ZoneId.of("Europe/Berlin");
 	private static final String DEFAULT_LOCATION = "adH";
+	private static final long CONVENT_WRITE_LOCK_KEY = 847362910473L;
 
 	private final EventRepository events;
 	private final AuditLogService audit;
@@ -94,6 +95,7 @@ public class EventService {
 			if (!(isAdmin || isSenior)) {
 				throw ApiErrors.forbidden("Only ADMIN/SENIOR can mark an event as a Convent");
 			}
+			acquireConventWriteLock();
 			validateConventChange(null, new ConventDerivation.ConventRef(id, toBerlinDate(startsAt), req.conventType()));
 		}
 
@@ -134,6 +136,18 @@ public class EventService {
 
 	@Transactional
 	public EventDto update(UUID id, UpdateEventRequest req, UserEntity actor) {
+		// Must happen before the entity is read, not just before validateConventChange: once this
+		// blocks on a board (or another update/delete) transaction that's already holding the lock,
+		// `e` would otherwise already be loaded from a stale pre-commit snapshot by the time we
+		// resume - a same-Berlin-date "unchanged" field could then silently revert whatever the other
+		// transaction just committed, or act on a row it just soft-deleted. Whether this update
+		// *could* be structural is knowable purely from the request, before `e` is even read: a
+		// structural change always requires touching startsAt, conventType or clearConventType.
+		boolean mayBeStructural = req.startsAt() != null
+				|| req.conventType() != null
+				|| Boolean.TRUE.equals(req.clearConventType());
+		if (mayBeStructural) acquireConventWriteLock();
+
 		var e = events.findVisibleById(id).orElseThrow(() -> ApiErrors.notFound("Event not found"));
 
 		boolean isAdmin = hasRole(actor, UserRole.ADMIN);
@@ -214,6 +228,8 @@ public class EventService {
 		}
 
 		if (isStillConvent && structuralChange) {
+			// mayBeStructural (checked before `e` was even read, see above) is a superset of
+			// structuralChange, so the lock is already held here.
 			validateConventChange(id, new ConventDerivation.ConventRef(id, newBerlinDate, newConventType));
 		} else if (!isStillConvent && wasConvent) {
 			// un-marking is always structural: the remaining convents must still resolve to valid
@@ -263,6 +279,14 @@ public class EventService {
 
 	@Transactional
 	public void delete(UUID id, UserEntity actor) {
+		// Acquired before the entity is read (not just before validateConventChange), for the same
+		// reason as in update(): once this blocks on another transaction already holding the lock, `e`
+		// would otherwise be loaded from a stale pre-commit snapshot on resume - e.g. still showing
+		// deletedAt == null and a protocol-free state for a Convent the other transaction just deleted
+		// or protocol-blocked concurrently. Every delete can touch the Convent timeline (deleting a
+		// non-Convent event is unaffected either way), so this is unconditional, unlike update().
+		acquireConventWriteLock();
+
 		var e = events.findVisibleById(id).orElseThrow(() -> ApiErrors.notFound("Event not found"));
 
 		boolean isAdmin = hasRole(actor, UserRole.ADMIN);
@@ -337,6 +361,22 @@ public class EventService {
 						.executeUpdate();
 			}
 		}
+	}
+
+	/**
+	 * Transaction-scoped Postgres advisory lock serializing every structural write to Convent-flagged
+	 * events - single-Event create/update/delete here, and the Convente board's batch commit
+	 * ({@link ConventBoardService}) - against each other. A row-level lock (PESSIMISTIC_WRITE on the
+	 * existing Convent rows, see {@link EventRepository#findAllConventsOrderedVisibleForUpdate()})
+	 * cannot protect an *empty* timeline: with zero Convent rows there is nothing to lock, so two
+	 * concurrent "create the very first Convent" writes could each validate against the same empty
+	 * snapshot and both commit a combined-invalid result. This lock doesn't depend on any row
+	 * existing, and auto-releases at commit/rollback - never needs an explicit unlock call.
+	 */
+	void acquireConventWriteLock() {
+		em.createNativeQuery("select pg_advisory_xact_lock(:key)")
+				.setParameter("key", CONVENT_WRITE_LOCK_KEY)
+				.getSingleResult();
 	}
 
 	private static boolean hasRole(UserEntity u, UserRole role) {

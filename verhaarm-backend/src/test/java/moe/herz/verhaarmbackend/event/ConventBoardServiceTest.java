@@ -35,20 +35,23 @@ class ConventBoardServiceTest {
 	private final ConventPeriodProtocolRepository protocols = mock(ConventPeriodProtocolRepository.class);
 	private final AuditLogRepository auditRepo = mock(AuditLogRepository.class);
 	private final AuditLogService audit = new AuditLogService(auditRepo, new ObjectMapper());
+
+	// EventService.softDeleteAndCleanup (delegated to by the board's delete path) and
+	// acquireConventWriteLock (delegated to by the board's write path) both issue native queries via
+	// @PersistenceContext EntityManager, unavailable under plain Mockito unit tests - stub the whole
+	// chain to a harmless no-op, same pattern as EventServiceTest. Kept as fields (not local to a
+	// factory method) so tests can assert call order against them directly.
+	private final jakarta.persistence.Query query = mock(jakarta.persistence.Query.class);
+	private final jakarta.persistence.EntityManager em = mock(jakarta.persistence.EntityManager.class);
 	private final EventService eventService = withMockEntityManager(new EventService(events, audit, protocols));
 	private final ConventBoardService service = new ConventBoardService(events, protocols, audit, eventService);
 
-	// EventService.softDeleteAndCleanup (which ConventBoardService's delete path delegates to) issues
-	// native queries via @PersistenceContext EntityManager, unavailable under plain Mockito unit tests -
-	// stub the whole chain to a harmless no-op, same pattern as EventServiceTest.
-	private static EventService withMockEntityManager(EventService service) {
+	private EventService withMockEntityManager(EventService service) {
 		try {
-			jakarta.persistence.Query query = mock(jakarta.persistence.Query.class);
 			lenient().when(query.setParameter(anyString(), any())).thenReturn(query);
+			lenient().when(query.getSingleResult()).thenReturn(null);
 			lenient().when(query.getResultList()).thenReturn(List.of());
 			lenient().when(query.executeUpdate()).thenReturn(0);
-
-			jakarta.persistence.EntityManager em = mock(jakarta.persistence.EntityManager.class);
 			lenient().when(em.createNativeQuery(anyString())).thenReturn(query);
 
 			Field f = EventService.class.getDeclaredField("em");
@@ -439,5 +442,43 @@ class ConventBoardServiceTest {
 		ResponseStatusException ex = assertThrows(ResponseStatusException.class,
 				() -> service.validateBatch(req, admin()));
 		assertEquals(400, ex.getStatusCode().value());
+	}
+
+	@Test
+	void applyAcquiresTheConventWriteLockBeforeReadingConventsEvenOnAnEmptyBoard() {
+		// Regression for the empty-board race: PESSIMISTIC_WRITE on findAllConventsOrderedVisibleForUpdate
+		// locks nothing when there are zero Convent rows, so two concurrent "create the very first
+		// Convent" batches could otherwise both validate against the same empty snapshot and both
+		// commit. The advisory lock doesn't depend on any row existing - assert it's acquired first.
+		when(events.findAllConventsOrderedVisibleForUpdate()).thenReturn(List.of());
+		when(events.findAllConventsOrderedVisible()).thenReturn(List.of());
+
+		OffsetDateTime newStart = OffsetDateTime.now(ZoneOffset.UTC).plusDays(30);
+		var req = new UpdateConventBoardRequest(
+				List.of(),
+				List.of(new ConventBoardCreateDto("Anconvent", null, newStart, ConventType.ANCONVENT, null)),
+				List.of()
+		);
+
+		assertDoesNotThrow(() -> service.apply(req, admin()));
+
+		var order = inOrder(em, events);
+		order.verify(em).createNativeQuery(contains("pg_advisory_xact_lock"));
+		order.verify(events).findAllConventsOrderedVisibleForUpdate();
+	}
+
+	@Test
+	void validateBatchNeverAcquiresTheWriteLockSinceItMustStayNonBlocking() {
+		when(events.findAllConventsOrderedVisible()).thenReturn(List.of());
+
+		var req = new UpdateConventBoardRequest(
+				List.of(),
+				List.of(new ConventBoardCreateDto("Anconvent", null, OffsetDateTime.now(ZoneOffset.UTC).plusDays(30), ConventType.ANCONVENT, null)),
+				List.of()
+		);
+
+		assertDoesNotThrow(() -> service.validateBatch(req, admin()));
+
+		verify(em, never()).createNativeQuery(contains("pg_advisory_xact_lock"));
 	}
 }

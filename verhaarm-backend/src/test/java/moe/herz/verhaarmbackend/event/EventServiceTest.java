@@ -33,13 +33,26 @@ class EventServiceTest {
 	private final AuditLogRepository auditRepo = mock(AuditLogRepository.class);
 	private final AuditLogService audit = new AuditLogService(auditRepo, new ObjectMapper());
 	private final ConventPeriodProtocolRepository protocols = mock(ConventPeriodProtocolRepository.class);
+
+	// The advisory-lock acquisition and (for delete) the attendance/fine cleanup both go through
+	// em.createNativeQuery(...) - stub the whole chain to a harmless no-op so every Convent-touching
+	// happy path (which now always acquires the lock first) doesn't NPE. Kept as a field (not local to
+	// a factory method) so tests can assert call order against it directly.
+	private final jakarta.persistence.Query query = mock(jakarta.persistence.Query.class);
+	private final EntityManager em = mock(EntityManager.class);
 	private final EventService service = withMockEntityManager(new EventService(events, audit, protocols));
 
-	private static EventService withMockEntityManager(EventService service) {
+	private EventService withMockEntityManager(EventService service) {
 		try {
+			lenient().when(query.setParameter(anyString(), any())).thenReturn(query);
+			lenient().when(query.getSingleResult()).thenReturn(null);
+			lenient().when(query.getResultList()).thenReturn(List.of());
+			lenient().when(query.executeUpdate()).thenReturn(0);
+			lenient().when(em.createNativeQuery(anyString())).thenReturn(query);
+
 			Field f = EventService.class.getDeclaredField("em");
 			f.setAccessible(true);
-			f.set(service, mock(EntityManager.class));
+			f.set(service, em);
 			return service;
 		} catch (ReflectiveOperationException e) {
 			throw new RuntimeException(e);
@@ -370,5 +383,51 @@ class EventServiceTest {
 		assertEquals(403, deleteEx.getStatusCode().value());
 
 		verify(events, never()).save(any());
+	}
+
+	@Test
+	void updateAcquiresTheConventWriteLockBeforeReadingTheEntityWhenTheRequestMayBeStructural() {
+		// Regression: the lock must be acquired before `e` is read, not just before
+		// validateConventChange - otherwise, once this call unblocks after waiting on another
+		// transaction that held the lock, `e` would already be a stale pre-commit snapshot loaded
+		// before the wait, and this update could silently revert whatever the other transaction just
+		// committed.
+		OffsetDateTime startsAt = OffsetDateTime.now(ZoneOffset.UTC).plusDays(10);
+		EventEntity existing = conventEvent(startsAt, ConventType.ANCONVENT); // consistent on its own
+		when(events.findVisibleById(existing.getId())).thenReturn(Optional.of(existing));
+		when(events.findAllConventsOrderedVisible()).thenReturn(List.of(existing));
+
+		var req = new UpdateEventRequest(null, null, startsAt.plusDays(1), null, null, null, null);
+		assertDoesNotThrow(() -> service.update(existing.getId(), req, admin()));
+
+		var order = inOrder(em, events);
+		order.verify(em).createNativeQuery(contains("pg_advisory_xact_lock"));
+		order.verify(events).findVisibleById(existing.getId());
+	}
+
+	@Test
+	void updateDoesNotAcquireTheLockForATitleOnlyEdit() {
+		OffsetDateTime startsAt = OffsetDateTime.now(ZoneOffset.UTC).plusDays(10);
+		EventEntity existing = conventEvent(startsAt, ConventType.REGULAR);
+		when(events.findVisibleById(existing.getId())).thenReturn(Optional.of(existing));
+
+		var req = new UpdateEventRequest("Neuer Titel", null, null, null, null, null, null);
+		assertDoesNotThrow(() -> service.update(existing.getId(), req, admin()));
+
+		verify(em, never()).createNativeQuery(contains("pg_advisory_xact_lock"));
+	}
+
+	@Test
+	void deleteAlwaysAcquiresTheConventWriteLockBeforeReadingTheEntity() {
+		OffsetDateTime startsAt = OffsetDateTime.now(ZoneOffset.UTC).plusDays(10);
+		EventEntity existing = conventEvent(startsAt, ConventType.ANCONVENT); // consistent on its own
+		when(events.findVisibleById(existing.getId())).thenReturn(Optional.of(existing));
+		when(events.findAllConventsOrderedVisible()).thenReturn(List.of(existing));
+
+		assertDoesNotThrow(() -> service.delete(existing.getId(), admin()));
+
+		var order = inOrder(em, events);
+		order.verify(em).createNativeQuery(contains("pg_advisory_xact_lock"));
+		order.verify(events).findVisibleById(existing.getId());
 	}
 }
