@@ -3,7 +3,7 @@ package moe.herz.verhaarmbackend.periodprotocol;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import moe.herz.verhaarmbackend.common.ApiErrors;
-import moe.herz.verhaarmbackend.period.ConventPeriodRepository;
+import moe.herz.verhaarmbackend.event.EventRepository;
 import moe.herz.verhaarmbackend.periodprotocol.dto.ConventPeriodProtocolDto;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,7 +26,7 @@ public class ConventPeriodProtocolService {
 
 	public record Download(Resource resource, String filename, String contentType) {}
 
-	private final ConventPeriodRepository periods;
+	private final EventRepository events;
 	private final ConventPeriodProtocolRepository protocols;
 	private final Path baseDir;
 
@@ -34,11 +34,11 @@ public class ConventPeriodProtocolService {
 	private EntityManager em;
 
 	public ConventPeriodProtocolService(
-			ConventPeriodRepository periods,
+			EventRepository events,
 			ConventPeriodProtocolRepository protocols,
 			@Value("${verhaarm.uploads.period-protocols.dir:/var/lib/verhaarm/uploads/period-protocols}") String baseDir
 	) {
-		this.periods = periods;
+		this.events = events;
 		this.protocols = protocols;
 		this.baseDir = Paths.get(baseDir).toAbsolutePath().normalize();
 	}
@@ -162,15 +162,6 @@ public class ConventPeriodProtocolService {
 	}
 
 	@Transactional(readOnly = true)
-	public boolean exists(UUID periodId) {
-		return protocols.existsByPeriodId(periodId);
-	}
-
-	/**
-	 * Used by ConventPeriodService when a period is deleted.
-	 * DB row is removed by ON DELETE CASCADE; this removes the disk directory.
-	 */
-	@Transactional(readOnly = true)
 	public void deletePeriodDirectoryBestEffort(UUID periodId) {
 		Path periodDir = resolvePeriodDir(periodId);
 		if (!Files.exists(periodDir)) return;
@@ -186,7 +177,8 @@ public class ConventPeriodProtocolService {
 	}
 
 	private void requirePeriodExists(UUID periodId) {
-		if (!periods.existsById(periodId)) {
+		var event = events.findVisibleById(periodId).orElseThrow(() -> ApiErrors.notFound("Period not found"));
+		if (event.getConventType() == null) {
 			throw ApiErrors.notFound("Period not found");
 		}
 	}

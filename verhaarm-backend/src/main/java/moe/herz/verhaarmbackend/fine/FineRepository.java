@@ -43,19 +43,21 @@ public interface FineRepository extends JpaRepository<FineEntity, UUID> {
 	// BALANCE (period-derived)
 	// --------------------
 
+	// Conventsperioden are derived (see ConventDerivation), not stored, so the caller resolves
+	// the period to a concrete date range before calling this.
 	@Query(value = """
     select coalesce(sum(f.amount_cents), 0)
     from fines f
     join fine_targets t on t.fine_id = f.id
-    join convent_periods p on p.id = :periodId
     where f.deleted_at is null
       and t.user_id = :targetUserId
-      and f.fine_date >= p.start_date
-      and f.fine_date <= p.end_date
+      and f.fine_date >= :fromDate
+      and f.fine_date <= :toDate
 """, nativeQuery = true)
 	long sumVisibleAmountCentsForTargetInPeriod(
 			@Param("targetUserId") UUID targetUserId,
-			@Param("periodId") UUID periodId
+			@Param("fromDate") LocalDate fromDate,
+			@Param("toDate") LocalDate toDate
 	);
 
 	// --------------------

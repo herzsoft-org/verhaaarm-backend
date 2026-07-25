@@ -8,7 +8,7 @@ import moe.herz.verhaarmbackend.common.ApiValidationException;
 import moe.herz.verhaarmbackend.fine.FineRepository;
 import moe.herz.verhaarmbackend.finephoto.FinePhotoService;
 import moe.herz.verhaarmbackend.paukstunde.PaukstundeRepository;
-import moe.herz.verhaarmbackend.period.ConventPeriodRepository;
+import moe.herz.verhaarmbackend.period.ConventPeriodService;
 import moe.herz.verhaarmbackend.push.PushDeviceRepository;
 import moe.herz.verhaarmbackend.auth.RefreshTokenRepository;
 import moe.herz.verhaarmbackend.task.TaskAssigneeRepository;
@@ -35,7 +35,7 @@ class UserServiceTest {
 	private final UserService service = new UserService(
 			users,
 			mock(FineRepository.class),
-			mock(ConventPeriodRepository.class),
+			mock(ConventPeriodService.class),
 			mock(PasswordEncoder.class),
 			audit,
 			mock(RefreshTokenRepository.class),

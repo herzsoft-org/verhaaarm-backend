@@ -1,19 +1,20 @@
 package moe.herz.verhaarmbackend.fine;
 
 import moe.herz.verhaarmbackend.common.ApiErrors;
-import moe.herz.verhaarmbackend.period.ConventPeriodEntity;
-import moe.herz.verhaarmbackend.period.ConventPeriodRepository;
+import moe.herz.verhaarmbackend.period.ConventDerivation;
+import moe.herz.verhaarmbackend.period.ConventPeriodService;
+import moe.herz.verhaarmbackend.period.dto.ConventPeriodDto;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserRepository;
 import moe.herz.verhaarmbackend.user.UserRole;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -22,13 +23,12 @@ import java.util.stream.Collectors;
 public class FineExportService {
 
 	private static final DateTimeFormatter TS = DateTimeFormatter.ISO_OFFSET_DATE_TIME;
-	private static final ZoneId ZONE_BERLIN = ZoneId.of("Europe/Berlin");
 
 	private final FineRepository fines;
-	private final ConventPeriodRepository periods;
+	private final ConventPeriodService periods;
 	private final UserRepository users;
 
-	public FineExportService(FineRepository fines, ConventPeriodRepository periods, UserRepository users) {
+	public FineExportService(FineRepository fines, ConventPeriodService periods, UserRepository users) {
 		this.fines = fines;
 		this.periods = periods;
 		this.users = users;
@@ -38,10 +38,11 @@ public class FineExportService {
 	public ExportResult exportCsv(UUID periodIdOrNull, boolean includeDeleted, UserEntity actor) {
 		requireExportRole(actor);
 
-		ConventPeriodEntity period = resolvePeriod(periodIdOrNull);
+		ConventPeriodDto period = resolvePeriod(periodIdOrNull);
 
-		LocalDate fromDate = period.getStartAt();
-		LocalDate toDateExclusive = period.getEndAt().plusDays(1);
+		LocalDate fromDate = period.startAt() == null ? ConventDerivation.DATE_FLOOR : period.startAt();
+		LocalDate toDateExclusive = period.endAt() == null ? ConventDerivation.DATE_CEIL : period.endAt().plusDays(1);
+		String semesterLabel = period.semester() == null ? "Semesterferien" : period.semester();
 
 		List<FineEntity> rows = includeDeleted
 				? fines.findAllIncludingDeletedInDateRangeWithTargets(fromDate, toDateExclusive)
@@ -86,7 +87,7 @@ public class FineExportService {
 					.map(UserEntity::getDisplayName)
 					.collect(Collectors.joining(","));
 
-			sb.append(esc(period.getSemester())).append(';');
+			sb.append(esc(semesterLabel)).append(';');
 			sb.append(f.getFineDate() == null ? "" : f.getFineDate().toString()).append(';');
 			sb.append(f.getCreatedAt() == null ? "" : TS.format(f.getCreatedAt())).append(';');
 			sb.append(creator == null ? "" : esc(creator.getDisplayName())).append(';');
@@ -98,16 +99,19 @@ public class FineExportService {
 
 		byte[] bytes = sb.toString().getBytes(StandardCharsets.UTF_8);
 
-		String filename = "verhaarm-fines-" + period.getSemester().replace("/", "-") + ".csv";
+		String filename = "verhaarm-fines-" + semesterLabel.replace("/", "-") + ".csv";
 		return new ExportResult(filename, bytes);
 	}
 
-	private ConventPeriodEntity resolvePeriod(UUID periodIdOrNull) {
+	private ConventPeriodDto resolvePeriod(UUID periodIdOrNull) {
 		if (periodIdOrNull != null) {
-			return periods.findById(periodIdOrNull).orElseThrow(() -> ApiErrors.badRequest("Period not found"));
+			try {
+				return periods.get(periodIdOrNull);
+			} catch (ResponseStatusException e) {
+				throw ApiErrors.badRequest("Period not found");
+			}
 		}
-		LocalDate today = LocalDate.now(ZONE_BERLIN);
-		return periods.findCovering(today).orElseThrow(() -> ApiErrors.notFound("No active period for today"));
+		return periods.getActive();
 	}
 
 	private static void requireExportRole(UserEntity actor) {

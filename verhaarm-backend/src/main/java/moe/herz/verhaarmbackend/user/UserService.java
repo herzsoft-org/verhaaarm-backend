@@ -7,7 +7,9 @@ import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.common.StructuredApiError;
 import moe.herz.verhaarmbackend.fine.FineRepository;
 import moe.herz.verhaarmbackend.finephoto.FinePhotoService;
-import moe.herz.verhaarmbackend.period.ConventPeriodRepository;
+import moe.herz.verhaarmbackend.period.ConventDerivation;
+import moe.herz.verhaarmbackend.period.ConventPeriodService;
+import moe.herz.verhaarmbackend.period.dto.ConventPeriodDto;
 import moe.herz.verhaarmbackend.paukstunde.PaukstundeRepository;
 import moe.herz.verhaarmbackend.push.PushDeviceRepository;
 import moe.herz.verhaarmbackend.task.TaskAssigneeEntity;
@@ -25,7 +27,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -34,7 +35,7 @@ public class UserService {
 
 	private final UserRepository users;
 	private final FineRepository fines;
-	private final ConventPeriodRepository periods;
+	private final ConventPeriodService periods;
 	private final PasswordEncoder encoder;
 	private final AuditLogService audit;
 
@@ -48,12 +49,10 @@ public class UserService {
 	private final FinePhotoService finePhotos;
 	private final PaukstundeRepository paukstunden;
 
-	private static final ZoneId ZONE_BERLIN = ZoneId.of("Europe/Berlin");
-
 	public UserService(
 			UserRepository users,
 			FineRepository fines,
-			ConventPeriodRepository periods,
+			ConventPeriodService periods,
 			PasswordEncoder encoder,
 			AuditLogService audit,
 			RefreshTokenRepository refreshTokens,
@@ -162,15 +161,12 @@ public class UserService {
 			throw ApiErrors.forbidden("Forbidden");
 		}
 
-		UUID periodId = periodIdOrNull;
-		if (periodId == null) {
-			LocalDate today = LocalDate.now(ZONE_BERLIN);
-			periodId = periods.findCovering(today)
-					.orElseThrow(() -> ApiErrors.notFound("No active period for today"))
-					.getId();
-		}
+		ConventPeriodDto period = periodIdOrNull != null ? periods.get(periodIdOrNull) : periods.getActive();
 
-		long cents = fines.sumVisibleAmountCentsForTargetInPeriod(targetUserId, periodId);
+		LocalDate fromDate = period.startAt() == null ? ConventDerivation.DATE_FLOOR : period.startAt();
+		LocalDate toDate = period.endAt() == null ? ConventDerivation.DATE_CEIL : period.endAt();
+
+		long cents = fines.sumVisibleAmountCentsForTargetInPeriod(targetUserId, fromDate, toDate);
 
 		return new UserBalanceDto(targetUserId, cents, formatEurFromCents(cents));
 	}

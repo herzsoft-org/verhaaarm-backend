@@ -28,4 +28,12 @@ public interface EventRepository extends JpaRepository<EventEntity, UUID> {
 			@Param("cutoff") OffsetDateTime cutoff,
 			@Param("now") OffsetDateTime now
 	);
+
+	@Query("""
+		select e from EventEntity e
+		where e.deletedAt is null
+		  and e.conventType is not null
+		order by e.startsAt asc
+	""")
+	List<EventEntity> findAllConventsOrderedVisible();
 }

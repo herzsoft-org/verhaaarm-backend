@@ -27,7 +27,6 @@ import java.util.UUID;
 public class LiveEventService {
 
 	private static final int TTL_HOURS = 2;
-	private static final String DEFAULT_EVENT_PLACE = "adH wenn nicht anders kommuniziert";
 	private static final String DEFAULT_EVENT_DESCRIPTION = "-";
 	private static final String MANDATORY_EVENT_DESCRIPTION = "Pflichtveranstaltung";
 
@@ -220,7 +219,7 @@ public class LiveEventService {
 			var liveEvent = new LiveEventEntity(
 					UUID.randomUUID(),
 					event.getTitle(),
-					DEFAULT_EVENT_PLACE,
+					event.getLocation(),
 					event.isMandatory() ? MANDATORY_EVENT_DESCRIPTION : DEFAULT_EVENT_DESCRIPTION,
 					event.getCreatorUserId(),
 					event.getId(),

@@ -1,171 +1,97 @@
 package moe.herz.verhaarmbackend.period;
 
 import moe.herz.verhaarmbackend.common.ApiErrors;
+import moe.herz.verhaarmbackend.event.EventEntity;
+import moe.herz.verhaarmbackend.event.EventRepository;
 import moe.herz.verhaarmbackend.period.dto.ConventPeriodDto;
-import moe.herz.verhaarmbackend.period.dto.CreateConventPeriodRequest;
-import moe.herz.verhaarmbackend.period.dto.UpdateConventPeriodRequest;
-import moe.herz.verhaarmbackend.periodprotocol.ConventPeriodProtocolService;
-import org.springframework.dao.DataIntegrityViolationException;
+import moe.herz.verhaarmbackend.periodprotocol.ConventPeriodProtocolRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
-import java.util.Locale;
 import java.util.UUID;
-import java.util.regex.Pattern;
 
+/**
+ * Conventsperioden and Semester are fully derived from the chronological list of Convent-flagged
+ * events (see ConventDerivation) - there is nothing to create/update/lock here anymore, only to read.
+ */
 @Service
 public class ConventPeriodService {
 
-	private static final Pattern SEMESTER_PATTERN = Pattern.compile("^(WS\\d{2}/\\d{2}|SS\\d{2})$");
 	private static final ZoneId ZONE_BERLIN = ZoneId.of("Europe/Berlin");
 
-	private final ConventPeriodRepository periods;
-	private final ConventPeriodProtocolService protocols;
+	private final EventRepository events;
+	private final ConventPeriodProtocolRepository protocols;
 
-	public ConventPeriodService(
-			ConventPeriodRepository periods,
-			ConventPeriodProtocolService protocols
-	) {
-		this.periods = periods;
+	public ConventPeriodService(EventRepository events, ConventPeriodProtocolRepository protocols) {
+		this.events = events;
 		this.protocols = protocols;
 	}
 
 	@Transactional(readOnly = true)
 	public List<ConventPeriodDto> listAll() {
-		return periods.findAllOrdered().stream().map(this::toDto).toList();
+		return derivePeriods().stream().map(this::toDto).toList();
 	}
 
 	@Transactional(readOnly = true)
 	public ConventPeriodDto get(UUID id) {
-		var p = periods.findById(id).orElseThrow(() -> ApiErrors.notFound("Period not found"));
-		return toDto(p);
+		return derivePeriods().stream()
+				.filter(p -> id.equals(p.id()))
+				.findFirst()
+				.map(this::toDto)
+				.orElseThrow(() -> ApiErrors.notFound("Period not found"));
 	}
 
 	@Transactional(readOnly = true)
 	public ConventPeriodDto getActive() {
 		LocalDate today = LocalDate.now(ZONE_BERLIN);
-		var p = periods.findCovering(today).orElseThrow(() -> ApiErrors.notFound("No active period for today"));
-		return toDto(p);
+
+		return derivePeriods().stream()
+				.filter(p -> covers(p, today))
+				.findFirst()
+				.map(this::toDto)
+				.orElseThrow(() -> ApiErrors.notFound("No active period for today"));
 	}
 
-	@Transactional
-	public ConventPeriodDto create(CreateConventPeriodRequest req) {
-		String semester = normalizeAndValidateSemester(req.semester());
-		validateDates(req.startAt(), req.endAt());
-
-		var p = new ConventPeriodEntity(
-				UUID.randomUUID(),
-				semester,
-				req.startAt(),
-				req.endAt(),
-				false
-		);
-
-		periods.save(p);
-		return toDto(p);
+	private List<ConventDerivation.DerivedPeriod> derivePeriods() {
+		List<ConventDerivation.ConventRef> refs = events.findAllConventsOrderedVisible().stream()
+				.map(ConventPeriodService::toRef)
+				.toList();
+		return ConventDerivation.derive(refs);
 	}
 
-	@Transactional
-	public ConventPeriodDto update(UUID id, UpdateConventPeriodRequest req) {
-		var p = periods.findById(id).orElseThrow(() -> ApiErrors.notFound("Period not found"));
-
-		if (req.semester() != null && !req.semester().isBlank()) {
-			String semester = normalizeAndValidateSemester(req.semester());
-			p.setSemester(semester);
-		}
-
-		LocalDate startAt = req.startAt() != null ? req.startAt() : p.getStartAt();
-		LocalDate endAt = req.endAt() != null ? req.endAt() : p.getEndAt();
-		validateDates(startAt, endAt);
-
-		p.setStartAt(startAt);
-		p.setEndAt(endAt);
-
-		if (req.locked() != null) {
-			p.setLocked(req.locked());
-		}
-
-		try {
-			periods.save(p);
-		} catch (DataIntegrityViolationException e) {
-			throw ApiErrors.badRequest("Constraint violation (invalid data)");
-		}
-
-		return toDto(p);
-	}
-
-	// Active is automatic now; keep the endpoint but make it explicit.
-	@Transactional
-	public ConventPeriodDto activate(UUID id) {
-		throw ApiErrors.badRequest("Active period is determined automatically by current date; manual activation is disabled");
-	}
-
-	@Transactional
-	public ConventPeriodDto lock(UUID id) {
-		var p = periods.findById(id).orElseThrow(() -> ApiErrors.notFound("Period not found"));
-		p.setLocked(true);
-		periods.save(p);
-		return toDto(p);
-	}
-
-	@Transactional
-	public void delete(UUID id) {
-		var p = periods.findById(id).orElseThrow(() -> ApiErrors.notFound("Period not found"));
-
-		try {
-			periods.delete(p);
-			periods.flush();
-
-			// DB row is removed through ON DELETE CASCADE.
-			// This cleans the uploaded PDF directory from disk.
-			protocols.deletePeriodDirectoryBestEffort(id);
-		} catch (DataIntegrityViolationException e) {
-			throw ApiErrors.badRequest("Cannot delete period due to existing references");
-		}
-	}
-
-	private static void validateDates(LocalDate startAt, LocalDate endAt) {
-		if (startAt == null || endAt == null) {
-			throw ApiErrors.badRequest("startAt and endAt are required");
-		}
-		// Inclusive end date semantics => allow startAt == endAt (one-day period)
-		if (startAt.isAfter(endAt)) {
-			throw ApiErrors.badRequest("startAt must be on or before endAt");
-		}
-	}
-
-	private static String normalizeAndValidateSemester(String semester) {
-		if (semester == null) {
-			throw ApiErrors.badRequest("semester is required");
-		}
-		String s = semester.trim().toUpperCase(Locale.ROOT);
-
-		if (!SEMESTER_PATTERN.matcher(s).matches()) {
-			throw ApiErrors.badRequest("Invalid semester format. Use WS24/25 or SS25");
-		}
-
-		return s;
-	}
-
-	private ConventPeriodDto toDto(ConventPeriodEntity p) {
-		return new ConventPeriodDto(
-				p.getId(),
-				p.getSemester(),
-				p.getStartAt(),
-				p.getEndAt(),
-				// active is computed: "true if it covers today"
-				isActiveToday(p),
-				p.isLocked(),
-				protocols.exists(p.getId())
+	private static ConventDerivation.ConventRef toRef(EventEntity e) {
+		return new ConventDerivation.ConventRef(
+				e.getId(),
+				e.getStartsAt().atZoneSameInstant(ZONE_BERLIN).toLocalDate(),
+				e.getConventType()
 		);
 	}
 
-	private boolean isActiveToday(ConventPeriodEntity p) {
+	private static boolean covers(ConventDerivation.DerivedPeriod p, LocalDate d) {
+		boolean afterOrEqualStart = p.startAt() == null || !p.startAt().isAfter(d);
+		boolean beforeOrEqualEnd = p.endAt() == null || !p.endAt().isBefore(d);
+		return afterOrEqualStart && beforeOrEqualEnd;
+	}
+
+	private ConventPeriodDto toDto(ConventDerivation.DerivedPeriod p) {
 		LocalDate today = LocalDate.now(ZONE_BERLIN);
-		// inclusive: startAt <= today <= endAt
-		return !p.getStartAt().isAfter(today) && !p.getEndAt().isBefore(today);
+		boolean hasProtocol = p.id() != null && protocols.existsByPeriodId(p.id());
+
+		return new ConventPeriodDto(
+				p.id(),
+				p.semester(),
+				p.startAt(),
+				p.endAt(),
+				covers(p, today),
+				hasProtocol,
+				p.periodType(),
+				p.endingConventType(),
+				p.endingConventLabel(),
+				p.consistent(),
+				p.warning()
+		);
 	}
 }

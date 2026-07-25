@@ -6,14 +6,16 @@ import moe.herz.verhaarmbackend.audit.AuditLogService;
 import moe.herz.verhaarmbackend.common.ApiErrors;
 import moe.herz.verhaarmbackend.common.StructuredApiError;
 import moe.herz.verhaarmbackend.paukstunde.dto.*;
-import moe.herz.verhaarmbackend.period.ConventPeriodEntity;
-import moe.herz.verhaarmbackend.period.ConventPeriodRepository;
+import moe.herz.verhaarmbackend.period.ConventDerivation;
+import moe.herz.verhaarmbackend.period.ConventPeriodService;
+import moe.herz.verhaarmbackend.period.dto.ConventPeriodDto;
 import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserMemberStatus;
 import moe.herz.verhaarmbackend.user.UserRepository;
 import moe.herz.verhaarmbackend.user.UserRole;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -27,7 +29,7 @@ public class PaukstundeService {
 
 	private final PaukstundeRepository paukstunden;
 	private final UserRepository users;
-	private final ConventPeriodRepository periods;
+	private final ConventPeriodService periods;
 	private final AuditLogService audit;
 
 	@PersistenceContext
@@ -36,7 +38,7 @@ public class PaukstundeService {
 	public PaukstundeService(
 			PaukstundeRepository paukstunden,
 			UserRepository users,
-			ConventPeriodRepository periods,
+			ConventPeriodService periods,
 			AuditLogService audit
 	) {
 		this.paukstunden = paukstunden;
@@ -85,10 +87,13 @@ public class PaukstundeService {
 		return listForPeriod(periodOrThrow(periodId), actor);
 	}
 
-	private List<PaukstundeDto> listForPeriod(ConventPeriodEntity period, UserEntity actor) {
+	private List<PaukstundeDto> listForPeriod(ConventPeriodDto period, UserEntity actor) {
+		LocalDate from = rangeStart(period);
+		LocalDate to = rangeEnd(period);
+
 		List<PaukstundeEntity> entries = isStaff(actor)
-				? paukstunden.findInDateRangeWithParticipants(period.getStartAt(), period.getEndAt())
-				: paukstunden.findForParticipantInDateRange(actor.getId(), period.getStartAt(), period.getEndAt());
+				? paukstunden.findInDateRangeWithParticipants(from, to)
+				: paukstunden.findForParticipantInDateRange(actor.getId(), from, to);
 
 		return entries.stream()
 				.map(p -> toDto(p, true))
@@ -113,8 +118,8 @@ public class PaukstundeService {
 			return new PaukstundeUserTotalDto(user.getId(), user.getUsername(), user.getDisplayName(), safeStatus(user).name(), 0, 0, Map.of());
 		}
 
-		ConventPeriodEntity period = currentPeriod();
-		List<PaukstundeEntity> entries = paukstunden.findForParticipantInDateRange(userId, period.getStartAt(), period.getEndAt());
+		ConventPeriodDto period = currentPeriod();
+		List<PaukstundeEntity> entries = paukstunden.findForParticipantInDateRange(userId, rangeStart(period), rangeEnd(period));
 		return totalForUser(user, entries);
 	}
 
@@ -130,8 +135,8 @@ public class PaukstundeService {
 		return summaryForPeriod(periodOrThrow(periodId));
 	}
 
-	private List<PaukstundeUserTotalDto> summaryForPeriod(ConventPeriodEntity period) {
-		List<PaukstundeEntity> entries = paukstunden.findInDateRangeWithParticipants(period.getStartAt(), period.getEndAt());
+	private List<PaukstundeUserTotalDto> summaryForPeriod(ConventPeriodDto period) {
+		List<PaukstundeEntity> entries = paukstunden.findInDateRangeWithParticipants(rangeStart(period), rangeEnd(period));
 		Map<UUID, UserEntity> enabledUsers = users.findAllEnabledWithRoles().stream()
 				.collect(Collectors.toMap(UserEntity::getId, Function.identity()));
 
@@ -192,19 +197,29 @@ public class PaukstundeService {
 		paukstunden.delete(p);
 	}
 
-	private ConventPeriodEntity currentPeriod() {
+	private ConventPeriodDto currentPeriod() {
 		LocalDate today = LocalDate.now(ZONE_BERLIN);
-		return periods.findCovering(today)
-				.orElseThrow(() -> StructuredApiError.notFound(
-						"CURRENT_CONVENTSPERIODE_NOT_FOUND",
-						"No active period for today",
-						Map.of("date", today.toString())
-				));
+		try {
+			return periods.getActive();
+		} catch (ResponseStatusException e) {
+			throw StructuredApiError.notFound(
+					"CURRENT_CONVENTSPERIODE_NOT_FOUND",
+					"No active period for today",
+					Map.of("date", today.toString())
+			);
+		}
 	}
 
-	private ConventPeriodEntity periodOrThrow(UUID periodId) {
-		return periods.findById(periodId)
-				.orElseThrow(() -> ApiErrors.notFound("Conventsperiode not found"));
+	private ConventPeriodDto periodOrThrow(UUID periodId) {
+		return periods.get(periodId);
+	}
+
+	private static LocalDate rangeStart(ConventPeriodDto period) {
+		return period.startAt() == null ? ConventDerivation.DATE_FLOOR : period.startAt();
+	}
+
+	private static LocalDate rangeEnd(ConventPeriodDto period) {
+		return period.endAt() == null ? ConventDerivation.DATE_CEIL : period.endAt();
 	}
 
 	private void requireCanModify(PaukstundeEntity p, UserEntity actor) {

@@ -156,6 +156,7 @@ class LiveEventServiceTest {
 				UUID.randomUUID(),
 				creator.getId(),
 				"Geplanter Termin",
+				"Kellerbar",
 				startsAt,
 				false,
 				EventKind.SECONDARY,
@@ -172,6 +173,7 @@ class LiveEventServiceTest {
 		LiveEventEntity materialized = liveEventCaptor.getValue();
 		assertEquals(scheduledEvent.getId(), materialized.getSourceEventId());
 		assertEquals("Geplanter Termin", materialized.getTitle());
+		assertEquals("Kellerbar", materialized.getPlace(), "materialized Live Event inherits the source Event's location");
 		assertEquals(startsAt.plusHours(2), materialized.getExpiresAt());
 		verify(notifications).createForEnabledUsersWithPush(
 				eq(NotificationType.LIVE_EVENT_CREATED),
