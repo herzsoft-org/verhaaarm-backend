@@ -294,6 +294,22 @@ public class EventService {
 			validateConventChange(id, null);
 		}
 
+		softDeleteAndCleanup(e);
+
+		var d = audit.obj();
+		audit.put(d, "eventId", e.getId());
+		audit.put(d, "deletedAt", e.getDeletedAt() == null ? null : e.getDeletedAt().toString());
+		audit.log(actor, "event.delete", d);
+	}
+
+	/**
+	 * Soft-deletes the event and clears/cleans up attendance+fine rows that reference it. Shared by
+	 * the single-Event delete flow above and the Convente board's batch delete ({@link ConventBoardService}),
+	 * which each do their own role/timeline validation and audit logging around this - this method only
+	 * owns the destructive side effects, so they're never duplicated between the two callers.
+	 */
+	@Transactional
+	void softDeleteAndCleanup(EventEntity e) {
 		e.setDeletedAt(OffsetDateTime.now());
 		events.save(e);
 
@@ -303,14 +319,14 @@ public class EventService {
 		  from attendance
 		  where event_id = :eventId
 		    and fine_id is not null
-		""").setParameter("eventId", id).getResultList();
+		""").setParameter("eventId", e.getId()).getResultList();
 
 		em.createNativeQuery("""
 		  update attendance
 		  set fine_id = null,
 		      deleted_at = coalesce(deleted_at, now())
 		  where event_id = :eventId
-		""").setParameter("eventId", id).executeUpdate();
+		""").setParameter("eventId", e.getId()).executeUpdate();
 
 		if (fineIds != null && !fineIds.isEmpty()) {
 			for (Object o : fineIds) {
@@ -321,19 +337,15 @@ public class EventService {
 						.executeUpdate();
 			}
 		}
-
-		var d = audit.obj();
-		audit.put(d, "eventId", e.getId());
-		audit.put(d, "deletedAt", e.getDeletedAt() == null ? null : e.getDeletedAt().toString());
-		audit.log(actor, "event.delete", d);
 	}
 
 	private static boolean hasRole(UserEntity u, UserRole role) {
 		return u.getRoles().stream().anyMatch(r -> r.getRole() == role);
 	}
 
-	/** Location is conceptually required, but never worth a hard validation error over. */
-	private static String normalizeLocation(String raw) {
+	/** Location is conceptually required, but never worth a hard validation error over. Package-visible
+	 * so the Convente board's create path can apply the exact same default. */
+	static String normalizeLocation(String raw) {
 		String trimmed = raw == null ? "" : raw.trim();
 		return trimmed.isEmpty() ? DEFAULT_LOCATION : trimmed;
 	}

@@ -2,7 +2,9 @@ package moe.herz.verhaarmbackend.event;
 
 import moe.herz.verhaarmbackend.audit.AuditLogService;
 import moe.herz.verhaarmbackend.common.ApiErrors;
+import moe.herz.verhaarmbackend.common.StructuredApiError;
 import moe.herz.verhaarmbackend.event.dto.ConventBoardChangeDto;
+import moe.herz.verhaarmbackend.event.dto.ConventBoardCreateDto;
 import moe.herz.verhaarmbackend.event.dto.ConventBoardDto;
 import moe.herz.verhaarmbackend.event.dto.ConventBoardItemDto;
 import moe.herz.verhaarmbackend.event.dto.ConventBoardSemesterDto;
@@ -29,14 +31,16 @@ import java.util.stream.Collectors;
 
 /**
  * The "Convente" management board: every Convent-flagged event, grouped into semester blocks, with
- * an atomic batch endpoint for reordering/retyping/redating several Convente at once.
+ * an atomic batch endpoint for reordering/retyping/redating, creating and deleting several Convente
+ * at once.
  * <p>
  * This exists because real repairs to a broken sequence (e.g. a Convent migrated with the wrong
- * type) often require moving/retyping more than one Convent together - an intermediate single-step
- * state can be invalid even though the final coordinated result is valid. The single-Convent
- * {@link EventService#update} path validates every write in isolation, so it can permanently deadlock
- * a repair that genuinely needs several coordinated changes; this batch validates only the final
- * proposed timeline, once, and applies all-or-nothing.
+ * type, or a missing Convent that needs to be inserted between two existing ones) often require
+ * touching more than one Convent together - an intermediate single-step state can be invalid even
+ * though the final coordinated result is valid. The single-Convent {@link EventService#update}/
+ * {@link EventService#delete} paths validate every write in isolation, so they can permanently
+ * deadlock a repair that genuinely needs several coordinated changes; this batch validates only the
+ * final proposed timeline, once, and applies all-or-nothing.
  */
 @Service
 public class ConventBoardService {
@@ -46,11 +50,18 @@ public class ConventBoardService {
 	private final EventRepository events;
 	private final ConventPeriodProtocolRepository protocols;
 	private final AuditLogService audit;
+	private final EventService eventService;
 
-	public ConventBoardService(EventRepository events, ConventPeriodProtocolRepository protocols, AuditLogService audit) {
+	public ConventBoardService(
+			EventRepository events,
+			ConventPeriodProtocolRepository protocols,
+			AuditLogService audit,
+			EventService eventService
+	) {
 		this.events = events;
 		this.protocols = protocols;
 		this.audit = audit;
+		this.eventService = eventService;
 	}
 
 	@Transactional(readOnly = true)
@@ -115,6 +126,49 @@ public class ConventBoardService {
 			audit.log(actor, "event.conventBoard.update", d);
 		}
 
+		for (UUID id : plan.deleteIds()) {
+			EventEntity e = plan.byId().get(id);
+
+			eventService.softDeleteAndCleanup(e);
+
+			var d = audit.obj();
+			audit.put(d, "eventId", e.getId());
+			audit.put(d, "title", e.getTitle());
+			audit.put(d, "conventType", e.getConventType() == null ? null : e.getConventType().name());
+			audit.log(actor, "event.conventBoard.delete", d);
+		}
+
+		for (Map.Entry<UUID, ConventBoardCreateDto> entry : plan.creates().entrySet()) {
+			UUID newId = entry.getKey();
+			ConventBoardCreateDto create = entry.getValue();
+
+			String title = create.title() == null ? "" : create.title().trim();
+			if (title.isBlank()) throw ApiErrors.badRequest("Title required");
+			String location = EventService.normalizeLocation(create.location());
+			boolean mandatory = create.mandatory() == null || create.mandatory();
+
+			EventEntity e = new EventEntity(
+					newId,
+					actor.getId(),
+					title,
+					location,
+					create.startsAt(),
+					mandatory,
+					EventKind.MAIN,
+					EventOwnerType.SENIOR
+			);
+			e.setConventType(create.conventType());
+			events.save(e);
+
+			var d = audit.obj();
+			audit.put(d, "eventId", e.getId());
+			audit.put(d, "title", e.getTitle());
+			audit.put(d, "location", e.getLocation());
+			audit.put(d, "startsAt", e.getStartsAt().toString());
+			audit.put(d, "conventType", e.getConventType().name());
+			audit.log(actor, "event.conventBoard.create", d);
+		}
+
 		return board(actor);
 	}
 
@@ -122,10 +176,16 @@ public class ConventBoardService {
 			Map<UUID, EventEntity> byId,
 			List<ConventDerivation.ConventRef> before,
 			List<ConventDerivation.ConventRef> after,
-			Set<UUID> targetIds
+			Set<UUID> targetIds,
+			Set<UUID> deleteIds,
+			Map<UUID, ConventBoardCreateDto> creates
 	) {}
 
 	private BatchPlan buildPlan(UpdateConventBoardRequest req, boolean forUpdate) {
+		if (req.changes().isEmpty() && req.creates().isEmpty() && req.deleteEventIds().isEmpty()) {
+			throw ApiErrors.badRequest("The batch must contain at least one change, create or delete");
+		}
+
 		List<EventEntity> conventEvents = forUpdate
 				? events.findAllConventsOrderedVisibleForUpdate()
 				: events.findAllConventsOrderedVisible();
@@ -163,20 +223,66 @@ public class ConventBoardService {
 			if (structuralChange) targetIds.add(change.eventId());
 		}
 
+		Set<UUID> deleteIds = new HashSet<>();
+		for (UUID id : req.deleteEventIds()) {
+			if (!deleteIds.add(id)) continue; // duplicate delete id, harmless
+
+			if (overrides.containsKey(id)) {
+				throw ApiErrors.badRequest("Event " + id + " is in both changes and deleteEventIds");
+			}
+
+			EventEntity e = byId.get(id);
+			if (e == null) {
+				EventEntity anyEvent = events.findVisibleById(id).orElse(null);
+				if (anyEvent == null) {
+					throw ApiErrors.notFound("Convent not found: " + id);
+				}
+				throw ApiErrors.badRequest("Event " + id + " is not a Convent - use the normal Event endpoints to delete it");
+			}
+		}
+
+		Map<UUID, ConventBoardCreateDto> createById = new LinkedHashMap<>();
+		List<ConventDerivation.ConventRef> newRefs = new ArrayList<>();
+		for (ConventBoardCreateDto create : req.creates()) {
+			UUID newId = UUID.randomUUID();
+			LocalDate d = toBerlinDate(create.startsAt());
+			createById.put(newId, create);
+			newRefs.add(new ConventDerivation.ConventRef(newId, d, create.conventType()));
+			targetIds.add(newId); // a brand-new Convent must always land in a consistent spot
+		}
+
 		List<ConventDerivation.ConventRef> after = new ArrayList<>();
 		for (ConventDerivation.ConventRef ref : before) {
+			if (deleteIds.contains(ref.id())) continue;
 			after.add(overrides.getOrDefault(ref.id(), ref));
 		}
+		after.addAll(newRefs);
 		after.sort(Comparator.comparing(ConventDerivation.ConventRef::date));
 
-		return new BatchPlan(byId, before, after, targetIds);
+		return new BatchPlan(byId, before, after, targetIds, deleteIds, createById);
 	}
 
 	private void runValidation(BatchPlan plan) {
+		Set<UUID> allProtocolIds = new HashSet<>(protocols.findAllPeriodIds());
+
+		// Checked directly (not just via validateProtocolsUnaffected below) for a clear, delete-specific
+		// message - matching the single-Event delete flow's wording - rather than the generic
+		// "range would change" message that a vanished period would otherwise produce.
+		for (UUID id : plan.deleteIds()) {
+			if (allProtocolIds.contains(id)) {
+				throw StructuredApiError.badRequest(
+						"CONVENT_HAS_PROTOCOL",
+						"This Convent already has an uploaded Protokoll. Remove the Protokoll before deleting it.",
+						StructuredApiError.details("conventId", id, "action", "delete")
+				);
+			}
+		}
+
 		ConventDerivation.validateNoRegression(plan.before(), plan.after(), plan.targetIds());
 
-		Set<UUID> allProtocolIds = new HashSet<>(protocols.findAllPeriodIds());
-		ConventDerivation.validateProtocolsUnaffected(plan.before(), plan.after(), allProtocolIds);
+		Set<UUID> protocolIdsToPreserve = new HashSet<>(allProtocolIds);
+		protocolIdsToPreserve.removeAll(plan.deleteIds()); // already rejected above with a clearer message
+		ConventDerivation.validateProtocolsUnaffected(plan.before(), plan.after(), protocolIdsToPreserve);
 	}
 
 	private ConventBoardDto projectBoard(

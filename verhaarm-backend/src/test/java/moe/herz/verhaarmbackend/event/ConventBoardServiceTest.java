@@ -5,6 +5,7 @@ import moe.herz.verhaarmbackend.audit.AuditLogRepository;
 import moe.herz.verhaarmbackend.audit.AuditLogService;
 import moe.herz.verhaarmbackend.common.ApiValidationException;
 import moe.herz.verhaarmbackend.event.dto.ConventBoardChangeDto;
+import moe.herz.verhaarmbackend.event.dto.ConventBoardCreateDto;
 import moe.herz.verhaarmbackend.event.dto.ConventBoardDto;
 import moe.herz.verhaarmbackend.event.dto.ConventBoardItemDto;
 import moe.herz.verhaarmbackend.event.dto.UpdateConventBoardRequest;
@@ -13,9 +14,11 @@ import moe.herz.verhaarmbackend.user.UserEntity;
 import moe.herz.verhaarmbackend.user.UserRole;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.lang.reflect.Field;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -32,7 +35,30 @@ class ConventBoardServiceTest {
 	private final ConventPeriodProtocolRepository protocols = mock(ConventPeriodProtocolRepository.class);
 	private final AuditLogRepository auditRepo = mock(AuditLogRepository.class);
 	private final AuditLogService audit = new AuditLogService(auditRepo, new ObjectMapper());
-	private final ConventBoardService service = new ConventBoardService(events, protocols, audit);
+	private final EventService eventService = withMockEntityManager(new EventService(events, audit, protocols));
+	private final ConventBoardService service = new ConventBoardService(events, protocols, audit, eventService);
+
+	// EventService.softDeleteAndCleanup (which ConventBoardService's delete path delegates to) issues
+	// native queries via @PersistenceContext EntityManager, unavailable under plain Mockito unit tests -
+	// stub the whole chain to a harmless no-op, same pattern as EventServiceTest.
+	private static EventService withMockEntityManager(EventService service) {
+		try {
+			jakarta.persistence.Query query = mock(jakarta.persistence.Query.class);
+			lenient().when(query.setParameter(anyString(), any())).thenReturn(query);
+			lenient().when(query.getResultList()).thenReturn(List.of());
+			lenient().when(query.executeUpdate()).thenReturn(0);
+
+			jakarta.persistence.EntityManager em = mock(jakarta.persistence.EntityManager.class);
+			lenient().when(em.createNativeQuery(anyString())).thenReturn(query);
+
+			Field f = EventService.class.getDeclaredField("em");
+			f.setAccessible(true);
+			f.set(service, em);
+			return service;
+		} catch (ReflectiveOperationException e) {
+			throw new RuntimeException(e);
+		}
+	}
 
 	private static UserEntity admin() {
 		UserEntity u = new UserEntity(UUID.randomUUID(), "admin", "Admin", "hash", false);
@@ -256,5 +282,162 @@ class ConventBoardServiceTest {
 		ResponseStatusException ex = assertThrows(ResponseStatusException.class,
 				() -> service.validateBatch(req, admin()));
 		assertEquals(400, ex.getStatusCode().value(), "the event exists but isn't a Convent, so this is a 400 not a 404");
+	}
+
+	@Test
+	void createInsertsANewConventBetweenTwoExistingOnesInTheSameSemester() {
+		OffsetDateTime anStart = OffsetDateTime.of(2025, 10, 6, 18, 0, 0, 0, ZoneOffset.UTC);
+		EventEntity an = conventEvent(anStart, ConventType.ANCONVENT);
+		OffsetDateTime abStart = OffsetDateTime.of(2026, 1, 26, 18, 0, 0, 0, ZoneOffset.UTC);
+		EventEntity ab = conventEvent(abStart, ConventType.ABCONVENT);
+
+		when(events.findAllConventsOrderedVisibleForUpdate()).thenReturn(List.of(an, ab));
+		when(events.findAllConventsOrderedVisible()).thenReturn(List.of(an, ab));
+
+		OffsetDateTime newStart = OffsetDateTime.of(2025, 12, 1, 18, 0, 0, 0, ZoneOffset.UTC);
+		var req = new UpdateConventBoardRequest(
+				List.of(),
+				List.of(new ConventBoardCreateDto("1. Convent", null, newStart, ConventType.REGULAR, null)),
+				List.of()
+		);
+
+		assertDoesNotThrow(() -> service.apply(req, admin()));
+
+		ArgumentCaptor<EventEntity> captor = ArgumentCaptor.forClass(EventEntity.class);
+		verify(events).save(captor.capture());
+		EventEntity created = captor.getValue();
+		assertEquals("1. Convent", created.getTitle());
+		assertEquals("adH", created.getLocation(), "blank location defaults to adH");
+		assertEquals(ConventType.REGULAR, created.getConventType());
+		assertTrue(created.isMandatory(), "mandatory defaults to true when omitted");
+		assertEquals(EventKind.MAIN, created.getEventKind());
+		assertEquals(EventOwnerType.SENIOR, created.getOwnerType());
+		assertNotEquals(an.getId(), created.getId());
+		assertNotEquals(ab.getId(), created.getId());
+
+		verify(auditRepo, times(1)).save(any());
+	}
+
+	@Test
+	void createOpensABrandNewSemesterAfterAnExistingAbconvent() {
+		OffsetDateTime anStart = OffsetDateTime.of(2025, 10, 6, 18, 0, 0, 0, ZoneOffset.UTC);
+		EventEntity an = conventEvent(anStart, ConventType.ANCONVENT);
+		OffsetDateTime abStart = OffsetDateTime.of(2026, 1, 26, 18, 0, 0, 0, ZoneOffset.UTC);
+		EventEntity ab = conventEvent(abStart, ConventType.ABCONVENT); // closes WS25/26
+
+		when(events.findAllConventsOrderedVisibleForUpdate()).thenReturn(List.of(an, ab));
+		when(events.findAllConventsOrderedVisible()).thenReturn(List.of(an, ab));
+
+		OffsetDateTime newAnStart = OffsetDateTime.of(2026, 4, 1, 18, 0, 0, 0, ZoneOffset.UTC);
+		var req = new UpdateConventBoardRequest(
+				List.of(),
+				List.of(new ConventBoardCreateDto("Anconvent", "adH", newAnStart, ConventType.ANCONVENT, true)),
+				List.of()
+		);
+
+		assertDoesNotThrow(() -> service.apply(req, admin()));
+
+		ArgumentCaptor<EventEntity> captor = ArgumentCaptor.forClass(EventEntity.class);
+		verify(events).save(captor.capture());
+		assertEquals(ConventType.ANCONVENT, captor.getValue().getConventType());
+	}
+
+	@Test
+	void deleteRemovesARegularConventThatIsNotAtASemesterBoundary() {
+		OffsetDateTime anStart = OffsetDateTime.of(2025, 10, 6, 18, 0, 0, 0, ZoneOffset.UTC);
+		EventEntity an = conventEvent(anStart, ConventType.ANCONVENT);
+		OffsetDateTime c1Start = OffsetDateTime.of(2025, 11, 3, 18, 0, 0, 0, ZoneOffset.UTC);
+		EventEntity c1 = conventEvent(c1Start, ConventType.REGULAR); // to be deleted
+		OffsetDateTime abStart = OffsetDateTime.of(2026, 1, 26, 18, 0, 0, 0, ZoneOffset.UTC);
+		EventEntity ab = conventEvent(abStart, ConventType.ABCONVENT);
+
+		when(events.findAllConventsOrderedVisibleForUpdate()).thenReturn(List.of(an, c1, ab));
+		when(events.findAllConventsOrderedVisible()).thenReturn(List.of(an, ab)); // c1 gone post-delete
+
+		var req = new UpdateConventBoardRequest(List.of(), List.of(), List.of(c1.getId()));
+
+		assertDoesNotThrow(() -> service.apply(req, admin()));
+
+		assertNotNull(c1.getDeletedAt());
+		verify(events).save(c1);
+		verify(auditRepo, times(1)).save(any());
+	}
+
+	@Test
+	void deleteAtTheSemesterBoundaryTogetherWithRetypingTheAdjacentConventSucceeds() {
+		// The realistic repair: a spurious extra Abconvent was created, and the actual closing
+		// Convent needs to be retyped to Abconvent in its place - both must happen together, since
+		// retyping c1 alone (while the spurious ab still exists) would leave two Abconvents.
+		OffsetDateTime anStart = OffsetDateTime.of(2025, 10, 6, 18, 0, 0, 0, ZoneOffset.UTC);
+		EventEntity an = conventEvent(anStart, ConventType.ANCONVENT);
+		OffsetDateTime c1Start = OffsetDateTime.of(2025, 11, 3, 18, 0, 0, 0, ZoneOffset.UTC);
+		EventEntity c1 = conventEvent(c1Start, ConventType.REGULAR); // to become the real Abconvent
+		OffsetDateTime spuriousAbStart = OffsetDateTime.of(2025, 11, 10, 18, 0, 0, 0, ZoneOffset.UTC);
+		EventEntity spuriousAb = conventEvent(spuriousAbStart, ConventType.ABCONVENT); // to be deleted
+
+		when(events.findAllConventsOrderedVisibleForUpdate()).thenReturn(List.of(an, c1, spuriousAb));
+		when(events.findAllConventsOrderedVisible()).thenReturn(List.of(an, c1));
+
+		var req = new UpdateConventBoardRequest(
+				List.of(new ConventBoardChangeDto(c1.getId(), ConventType.ABCONVENT, c1Start)),
+				List.of(),
+				List.of(spuriousAb.getId())
+		);
+
+		assertDoesNotThrow(() -> service.apply(req, admin()));
+
+		assertEquals(ConventType.ABCONVENT, c1.getConventType());
+		assertNotNull(spuriousAb.getDeletedAt());
+		verify(events).save(c1);
+		verify(events).save(spuriousAb);
+	}
+
+	@Test
+	void deletingAConventWithAnUploadedProtocolIsRejectedWithAClearMessage() {
+		OffsetDateTime c1Start = OffsetDateTime.of(2025, 11, 3, 18, 0, 0, 0, ZoneOffset.UTC);
+		EventEntity c1 = conventEvent(c1Start, ConventType.REGULAR);
+
+		when(events.findAllConventsOrderedVisibleForUpdate()).thenReturn(List.of(c1));
+		when(protocols.findAllPeriodIds()).thenReturn(List.of(c1.getId()));
+
+		var req = new UpdateConventBoardRequest(List.of(), List.of(), List.of(c1.getId()));
+
+		ApiValidationException ex = assertThrows(ApiValidationException.class,
+				() -> service.apply(req, admin()));
+		assertEquals("CONVENT_HAS_PROTOCOL", ex.getCode());
+		assertNull(c1.getDeletedAt());
+		verify(events, never()).save(any());
+	}
+
+	@Test
+	void aBatchWithOneInvalidOperationAppliesNothingAtAll() {
+		// A valid create bundled with a delete that's blocked by a Protokoll - the whole batch must
+		// be rejected, including the otherwise-fine create.
+		OffsetDateTime c1Start = OffsetDateTime.of(2025, 11, 3, 18, 0, 0, 0, ZoneOffset.UTC);
+		EventEntity c1 = conventEvent(c1Start, ConventType.REGULAR);
+
+		when(events.findAllConventsOrderedVisibleForUpdate()).thenReturn(List.of(c1));
+		when(protocols.findAllPeriodIds()).thenReturn(List.of(c1.getId()));
+
+		OffsetDateTime newStart = OffsetDateTime.of(2025, 12, 1, 18, 0, 0, 0, ZoneOffset.UTC);
+		var req = new UpdateConventBoardRequest(
+				List.of(),
+				List.of(new ConventBoardCreateDto("2. Convent", null, newStart, ConventType.REGULAR, null)),
+				List.of(c1.getId())
+		);
+
+		assertThrows(ApiValidationException.class, () -> service.apply(req, admin()));
+
+		verify(events, never()).save(any());
+		verify(auditRepo, never()).save(any());
+	}
+
+	@Test
+	void emptyBatchIsRejected() {
+		var req = new UpdateConventBoardRequest(List.of(), List.of(), List.of());
+
+		ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+				() -> service.validateBatch(req, admin()));
+		assertEquals(400, ex.getStatusCode().value());
 	}
 }
