@@ -209,7 +209,7 @@ class ConventDerivationTest {
 		List<ConventRef> after = List.of(ab); // an deleted, target=null
 
 		assertThrows(ApiValidationException.class,
-				() -> ConventDerivation.validateNoRegression(before, after, null));
+				() -> ConventDerivation.validateNoRegression(before, after, (UUID) null));
 	}
 
 	@Test

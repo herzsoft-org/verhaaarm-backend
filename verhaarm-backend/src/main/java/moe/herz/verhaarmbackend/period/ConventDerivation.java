@@ -146,14 +146,20 @@ public final class ConventDerivation {
 
 	/**
 	 * Compares the full timeline before/after a proposed change and rejects the change if it
-	 * would make any Convent that was previously consistent become inconsistent (or leave the
-	 * newly created/edited Convent itself inconsistent). Pre-existing inconsistencies (e.g. from
-	 * best-effort legacy migration) are left alone and can never block unrelated future writes -
-	 * they can only be reduced (a genuine repair) or stay the same, never worsened.
+	 * would make any Convent that was previously consistent become inconsistent (or leave any
+	 * newly created/edited/moved Convent itself inconsistent). Pre-existing inconsistencies (e.g.
+	 * from best-effort legacy migration) are left alone and can never block unrelated future writes
+	 * - they can only be reduced (a genuine repair) or stay the same, never worsened.
+	 * <p>
+	 * Takes a set so a single atomic batch (e.g. the Convente board reordering several Convente at
+	 * once) can be validated as one final state - real repairs often require moving/retyping more
+	 * than one Convent together, since an intermediate single-Convent state can be invalid even
+	 * when the final coordinated result is valid.
 	 *
-	 * @param targetId the id of the convent being created/moved/retyped, or null for a delete/unmark
+	 * @param targetIds ids of every convent being created/moved/retyped in this change; empty for a
+	 *                  pure delete/unmark with no other convent touched
 	 */
-	public static void validateNoRegression(List<ConventRef> before, List<ConventRef> after, UUID targetId) {
+	public static void validateNoRegression(List<ConventRef> before, List<ConventRef> after, Set<UUID> targetIds) {
 		Map<UUID, Boolean> beforeConsistency = new HashMap<>();
 		for (DerivedPeriod p : derive(before)) {
 			if (p.id() != null) beforeConsistency.put(p.id(), p.consistent());
@@ -163,7 +169,7 @@ public final class ConventDerivation {
 			if (p.id() == null) continue; // OPEN tail has no identity, always consistent=true
 			if (p.consistent()) continue;
 
-			if (p.id().equals(targetId)) {
+			if (targetIds.contains(p.id())) {
 				throw StructuredApiError.badRequest(
 						"CONVENT_SEQUENCE_INVALID",
 						"This would leave the Convent itself in an inconsistent sequence"
@@ -183,6 +189,11 @@ public final class ConventDerivation {
 			}
 			// else: already inconsistent before (pre-existing legacy data) and still is - not a regression.
 		}
+	}
+
+	/** Convenience overload for a single-Convent change (or none, for a delete/unmark). */
+	public static void validateNoRegression(List<ConventRef> before, List<ConventRef> after, UUID targetId) {
+		validateNoRegression(before, after, targetId == null ? Set.of() : Set.of(targetId));
 	}
 
 	/**
